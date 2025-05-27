@@ -12,6 +12,60 @@ function defaultHeaders() {
   };
 }
 
+export interface UserSearchResponseItem {
+  id: number; // 실제 UserEntity의 ID (Long)
+  identifier: string; // UUID
+  name: string; // UserEntity의 userName
+  email: string;
+}
+
+export interface UserSearchPage {
+  content: UserSearchResponseItem[];
+  totalPages: number;
+  totalElements: number;
+  number: number; // 현재 페이지 번호
+  size: number; // 페이지 크기
+}
+
+// 사용자 검색 API 함수 추가
+export const searchUsersApi = async (
+  keyword: string,
+  page: number = 0,
+  size: number = 5 // 한 번에 보여줄 검색 결과 수 (조정 가능)
+): Promise<UserSearchPage> => { // 전체 Page 객체를 반환하도록 수정
+  const token = localStorage.getItem('token');
+  if (!token) {
+    console.error('[api.ts] No auth token found for searchUsersApi.');
+    throw new Error('인증 토큰이 없습니다.');
+  }
+
+  const apiUrl = `${BASE_URL.replace('/auth', '/api')}/users/search?keyword=${encodeURIComponent(keyword)}&page=${page}&size=${size}`;
+  // console.log('[api.ts] Searching users from URL:', apiUrl);
+
+  const response = await fetch(apiUrl, {
+    method: 'GET',
+    headers: {
+      ...defaultHeaders(), // CSRF 토큰 등 포함
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  // console.log('[api.ts] searchUsersApi response status:', response.status);
+  const responseData: ApiResponse<UserSearchPage> = await response.json();
+
+  if (!response.ok) {
+    // console.error('[api.ts] Failed to search users:', responseData);
+    throw new Error(responseData.message || `사용자 검색 실패: ${response.statusText}`);
+  }
+
+  if (!responseData.success) {
+    // console.warn('[api.ts] searchUsersApi returned success:false. Message:', responseData.message);
+    throw new Error(responseData.message || '사용자 검색에 실패했습니다.');
+  }
+  // console.log('[api.ts] Successfully searched users:', responseData.data);
+  return responseData.data; // Page 객체 반환
+};
+
 export interface ContractUploadData {
   title: string;
   description?: string;

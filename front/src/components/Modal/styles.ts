@@ -185,3 +185,92 @@ export const StyledInput = styled.input`
     color: #aaa;
   }
 `;
+
+export const SearchContainer = styled.div`
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+`;
+
+export const SearchInput = styled(StyledInput)` // 기존 StyledInput 확장
+  flex-grow: 1;
+`;
+
+export const SearchButton = styled(FooterButton)` // 기존 FooterButton 확장 또는 새 스타일
+  margin-left: 0; // FooterButton의 margin-left 제거
+  padding: 0.75rem 1rem; // 패딩 조정
+  flex-shrink: 0;
+`;
+
+export const SearchResultsContainer = styled.div`
+  max-height: 150px; // 결과가 많을 경우 스크롤
+  overflow-y: auto;
+  border: 1px solid ${colors.secondary}; //
+  border-radius: 0.25rem;
+  margin-bottom: 1rem;
+`;
+
+export const SearchResultItem = styled.div`
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  border-bottom: 1px solid ${colors.secondary}; //
+  &:last-child {
+    border-bottom: none;
+  }
+  &:hover {
+    background-color: ${colors.primaryAccent}; //
+  }
+  small {
+    color: ${colors.textSecondary}; //
+    display: block;
+    font-size: 0.8em;
+  }
+`;
+
+export const NoResultsMessage = styled.div`
+  padding: 1rem;
+  text-align: center;
+  color: ${colors.textSecondary}; //
+`;
+
+export const SelectedCounterpartiesContainer = styled.div`
+  margin-bottom: 1rem;
+`;
+
+export const SelectedCounterpartyList = styled.ul`
+  list-style: none;
+  padding: 0;
+  margin: 0;
+`;
+
+export const SelectedCounterpartyItem = styled.li`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background-color: ${colors.primaryAccent}; //
+  border-radius: 0.25rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: ${colors.textPrimary}; //
+
+  span { // 사용자 이름 표시 영역
+    margin-right: 0.5rem;
+    word-break: break-all;
+  }
+`;
+
+export const RemoveCounterpartyButton = styled.button`
+  background: transparent;
+  border: none;
+  color: ${colors.primary}; //
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: bold;
+  padding: 0.25rem;
+  line-height: 1;
+
+  &:hover {
+    color: darkred;
+  }
+`;
