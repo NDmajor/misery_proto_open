@@ -64,6 +64,7 @@ public class ContractController {
             log.error("[ContractController] Error uploading contract for user UUID {}: {}", uuid, e.getMessage(), e);
             return ResponseEntity.internalServerError().body(ApiResponse.fail("Upload failed: " + e.getMessage()));
         }
+        
     }
 
     @GetMapping("/my")

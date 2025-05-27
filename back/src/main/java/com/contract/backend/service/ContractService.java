@@ -88,11 +88,8 @@ public class ContractService {
         contractPartyRepository.save(new ContractPartyEntity(contract, uploader, PartyRole.INITIATOR));
 
         for (UUID uuid : request.getParticipantIds()) {
-            UserEntity participant = userRepository.findByUuid(uuid)
-                    .orElseThrow(() -> {
-                        log.error("[ContractService] Participant UUID not found: {}", uuid);
-                        return new IllegalArgumentException("참여자 UUID를 찾을 수 없습니다: " + uuid);
-                    });
+           UserEntity participant = userRepository.findByUuid(uuid.toString()) //
+                            .orElseThrow(() -> new RuntimeException("해당 UUID를 가진 참여자(사용자)를 찾을 수 없습니다: " + uuid));
             contractPartyRepository.save(new ContractPartyEntity(contract, participant, PartyRole.COUNTERPARTY));
             log.debug("[ContractService] Added participant {} as COUNTERPARTY to contract ID: {}", participant.getUserName(), contract.getId());
         }
