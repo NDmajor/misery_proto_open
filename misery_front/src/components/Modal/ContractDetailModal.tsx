@@ -171,27 +171,73 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     onClose();
   };
 
-  // 현재 사용자가 이미 서명했는지 확인
-  const hasUserSigned = () => {
-    if (!contract || !contract.currentVersion || !currentUser) return false;
-    
-    return contract.currentVersion.signatures.some(
-      signature => signature.signerUuid === currentUser.uuid
-    );
-  };
+  // 현재 사용자가 이미 서명했는지 확인 (디버깅 강화)
+const hasUserSigned = () => {
+  console.log('=== hasUserSigned 디버깅 ===');
+  
+  if (!contract || !contract.currentVersion || !currentUser) {
+    console.log('필요한 데이터가 없음');
+    return false;
+  }
+  
+  const userUuid = currentUser.uuid || currentUser.id?.toString();
+  console.log('비교할 사용자 UUID:', userUuid);
+  console.log('서명 목록:', contract.currentVersion.signatures);
+  
+  // 각 서명과 비교
+  const signatureMatches = contract.currentVersion.signatures.map(signature => {
+    const uuidMatch = signature.signerUuid === userUuid;
+    const idMatch = signature.signerUuid === currentUser.id?.toString();
+    console.log(`서명 비교:`, {
+      signerUuid: signature.signerUuid,
+      signerName: signature.signerUsername,
+      userUuid: userUuid,
+      currentUserId: currentUser.id,
+      uuidMatch,
+      idMatch,
+      anyMatch: uuidMatch || idMatch
+    });
+    return uuidMatch || idMatch;
+  });
+  
+  const hasSignature = signatureMatches.some(match => match);
+  console.log('서명 여부:', hasSignature);
+  console.log('========================');
+  
+  return hasSignature;
+};
 
   // 현재 사용자가 참여자인지 확인
   const isUserParticipant = () => {
     if (!contract || !currentUser) return false;
     
-    // 생성자이거나 참여자 목록에 있는지 확인
     const isCreator = contract.createdBy.id === currentUser.id;
-    const isParticipant = contract.participants.some(
-      participant => participant.userUuid === currentUser.uuid
+    const userUuid = currentUser.uuid || currentUser.id?.toString();
+    const isParticipant = contract.participants.some(participant => 
+      participant.userUuid === userUuid || 
+      participant.userUuid === currentUser.id?.toString()
     );
     
     return isCreator || isParticipant;
   };
+
+  // 피계약자 역할 확인 함수 추가
+const getUserRole = () => {
+  if (!contract || !currentUser) return null;
+  
+  // 생성자인 경우
+  if (contract.createdBy.id === currentUser.id) {
+    return 'CREATOR';
+  }
+  
+  // 참여자 목록에서 역할 찾기
+  const userUuid = currentUser.uuid || currentUser.id?.toString();
+  const participant = contract.participants.find(p => 
+    p.userUuid === userUuid || p.userUuid === currentUser.id?.toString()
+  );
+  
+  return participant?.role || null;
+};
 
   // 현재 사용자가 서명할 수 있는지 확인
   const canSign = () => {
@@ -202,6 +248,108 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     if (!isUserParticipant()) return false; // 참여자가 아닌 경우
     
     return true;
+  };
+
+  // 현재 사용자의 서명 정보 가져오기
+  const getCurrentUserSignature = () => {
+    if (!contract || !contract.currentVersion || !currentUser) return null;
+    
+    const userUuid = currentUser.uuid || currentUser.id?.toString();
+    if (!userUuid) return null;
+    
+    return contract.currentVersion.signatures.find(signature => {
+      return signature.signerUuid === userUuid || 
+             signature.signerUuid === currentUser.id?.toString();
+    });
+  };
+
+  // 서명 상태에 따른 메시지와 스타일 결정
+  const getSigningStatusDisplay = () => {
+    if (!contract || !currentUser) return null;
+    
+    if (!isUserParticipant()) {
+      return {
+        type: 'info',
+        title: 'ℹ️ 참여자 아님',
+        message: '이 계약서의 참여자가 아닙니다.',
+        backgroundColor: '#fff3e0',
+        borderColor: '#ff9800',
+        textColor: '#f57c00'
+      };
+    }
+
+    // 사용자가 이미 서명한 경우
+    if (hasUserSigned()) {
+      const userSignature = getCurrentUserSignature();
+      return {
+        type: 'success',
+        title: '✅ 서명 완료',
+        message: userSignature 
+          ? `${moment(userSignature.signedAt).format('YYYY년 MM월 DD일 HH:mm')}에 서명을 완료했습니다.`
+          : '이미 서명을 완료했습니다.',
+        backgroundColor: '#e8f5e8',
+        borderColor: '#4caf50',
+        textColor: '#2e7d32'
+      };
+    }
+    
+    if (contract.status === 'CLOSED') {
+      return {
+        type: 'info',
+        title: 'ℹ️ 계약 완료',
+        message: '이미 완료된 계약서입니다.',
+        backgroundColor: '#e3f2fd',
+        borderColor: '#2196f3',
+        textColor: '#1976d2'
+      };
+    }
+    
+    if (contract.status === 'CANCELLED') {
+      return {
+        type: 'warning',
+        title: '⚠️ 계약 취소',
+        message: '취소된 계약서입니다.',
+        backgroundColor: '#ffebee',
+        borderColor: '#f44336',
+        textColor: '#d32f2f'
+      };
+    }
+    
+    if (contract.currentVersion?.status === 'SIGNED') {
+      return {
+        type: 'info',
+        title: 'ℹ️ 서명 완료',
+        message: '모든 서명이 완료된 계약서입니다.',
+        backgroundColor: '#e8f5e8',
+        borderColor: '#4caf50',
+        textColor: '#2e7d32'
+      };
+    }
+    
+    if (contract.currentVersion?.status === 'ARCHIVED') {
+      return {
+        type: 'info',
+        title: 'ℹ️ 보관됨',
+        message: '보관된 버전입니다.',
+        backgroundColor: '#f5f5f5',
+        borderColor: '#9e9e9e',
+        textColor: '#666'
+      };
+    }
+
+    // 서명 가능한 경우
+    if (canSign()) {
+      return {
+        type: 'canSign',
+        title: '✓ 서명 가능',
+        message: '이 계약서에 서명할 수 있습니다.',
+        backgroundColor: '#e8f5e8',
+        borderColor: '#4caf50',
+        textColor: '#2e7d32'
+      };
+    }
+
+    return null;
   };
 
   // 서명 상태 메시지
@@ -234,6 +382,8 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     
     return '';
   };
+
+  const statusDisplay = getSigningStatusDisplay();
 
   // 상태 텍스트 변환
   const getStatusText = (status: string) => {
@@ -418,55 +568,50 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
                   서명 현황 ({contract.currentVersion.signatures.length}명)
                 </h3>
                 
-                {contract.currentVersion.signatures.map((signature, index) => (
-                  <InfoDisplay key={signature.signerUuid} style={{ marginBottom: '0.5rem' }}>
-                    <strong>{signature.signerUsername}:</strong> 
-                    {moment(signature.signedAt).format('YYYY년 MM월 DD일 HH:mm')}에 서명
-                    {currentUser && signature.signerUuid === currentUser.uuid && (
-                      <span style={{ 
-                        color: '#388e3c', 
-                        fontWeight: 'bold', 
-                        marginLeft: '8px' 
-                      }}>
-                        (본인)
-                      </span>
-                    )}
-                  </InfoDisplay>
-                ))}
+                {contract.currentVersion.signatures.map((signature, index) => {
+                  const userUuid = currentUser?.uuid || currentUser?.id?.toString();
+                  const isCurrentUserSignature = signature.signerUuid === userUuid || 
+                                                signature.signerUuid === currentUser?.id?.toString();
+                  
+                  return (
+                    <InfoDisplay key={signature.signerUuid} style={{ marginBottom: '0.5rem' }}>
+                      <strong>{signature.signerUsername}:</strong> 
+                      {moment(signature.signedAt).format('YYYY년 MM월 DD일 HH:mm')}에 서명
+                      {currentUser && isCurrentUserSignature && (
+                        <span style={{ 
+                          color: '#388e3c', 
+                          fontWeight: 'bold', 
+                          marginLeft: '8px' 
+                        }}>
+                          (본인)
+                        </span>
+                      )}
+                    </InfoDisplay>
+                  );
+                })}
               </div>
             )}
 
-            {/* 서명 상태 메시지 */}
-            {currentUser && (
+            {/* 서명 상태 메시지 (개선된 버전) */}
+            {currentUser && statusDisplay && (
               <div style={{ 
                 borderTop: '1px solid #e5e5e5', 
                 paddingTop: '1rem', 
                 marginTop: '1rem' 
               }}>
-                {canSign() ? (
-                  <div style={{
-                    padding: '12px',
-                    background: '#e8f5e8',
-                    border: '1px solid #4caf50',
-                    borderRadius: '4px',
-                    color: '#2e7d32'
-                  }}>
-                    <strong>✓ 서명 가능</strong><br />
-                    이 계약서에 서명할 수 있습니다.
-                  </div>
-                ) : getSigningStatusMessage() && (
-                  <div style={{
-                    padding: '12px',
-                    background: '#fff3e0',
-                    border: '1px solid #ff9800',
-                    borderRadius: '4px',
-                    color: '#f57c00'
-                  }}>
-                    <strong>ℹ️ {getSigningStatusMessage()}</strong>
-                  </div>
-                )}
+                <div style={{
+                  padding: '12px',
+                  background: statusDisplay.backgroundColor,
+                  border: `1px solid ${statusDisplay.borderColor}`,
+                  borderRadius: '4px',
+                  color: statusDisplay.textColor
+                }}>
+                  <strong>{statusDisplay.title}</strong><br />
+                  {statusDisplay.message}
+                </div>
               </div>
             )}
+
           </>
         ) : (
           <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
@@ -480,6 +625,7 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
           닫기
         </FooterButton>
         
+        {/* 서명 가능한 경우에만 서명 버튼 표시 */}
         {contract && currentUser && canSign() && (
           <FooterButton 
             type="button" 
@@ -491,6 +637,22 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
             }}
           >
             {signing ? '서명 중...' : '서명하기'}
+          </FooterButton>
+        )}
+        
+        {/* 이미 서명한 경우 서명 완료 버튼 표시 (비활성화) */}
+        {contract && currentUser && hasUserSigned() && !canSign() && (
+          <FooterButton 
+            type="button" 
+            disabled={true}
+            style={{
+              backgroundColor: '#4caf50',
+              borderColor: '#4caf50',
+              opacity: 0.7,
+              cursor: 'not-allowed'
+            }}
+          >
+            ✅ 서명 완료
           </FooterButton>
         )}
       </ModalFooter>
