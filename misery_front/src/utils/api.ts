@@ -194,5 +194,92 @@ export const getCurrentUser = async () => {
   return res.json();
 };
 
+// 파일 다운로드 (Blob 반환)
+export const downloadContractFile = async (filePath: string): Promise<Blob> => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`https://localhost:8443/api/contracts/files/${encodeURIComponent(filePath)}`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  
+  if (!res.ok) {
+    throw new Error(`파일 다운로드 실패: ${res.statusText}`);
+  }
+  
+  return res.blob();
+};
+
+// 파일 미리보기용 URL 생성
+export const getFilePreviewUrl = async (filePath: string): Promise<string> => {
+  const blob = await downloadContractFile(filePath);
+  return URL.createObjectURL(blob);
+};
+
+// 파일 다운로드 (직접 다운로드)
+export const downloadFileDirectly = async (filePath: string, fileName: string) => {
+  try {
+    const blob = await downloadContractFile(filePath);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('파일 다운로드 오류:', error);
+    throw error;
+  }
+};
+
+// 계약서 삭제
+export const deleteContract = async (contractId: number) => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`https://localhost:8443/api/contracts/${contractId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: {
+      ...defaultHeaders(),
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) throw new Error(`계약서 삭제 실패: ${res.statusText}`);
+  return res.json();
+};
+
+// 계약서 수정
+export const updateContract = async (contractId: number, data: FormData) => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`https://localhost:8443/api/contracts/${contractId}`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      // Content-Type은 FormData 사용시 자동으로 설정되므로 제외
+    },
+    body: data,
+  });
+  if (!res.ok) throw new Error(`계약서 수정 실패: ${res.statusText}`);
+  return res.json();
+};
+
+// 계약서 무결성 검증
+export const verifyContractIntegrity = async (contractId: number, versionNumber: number) => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`https://localhost:8443/api/contracts/${contractId}/versions/${versionNumber}/verify`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      ...defaultHeaders(),
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) throw new Error(`무결성 검증 실패: ${res.statusText}`);
+  return res.json();
+};
 
 

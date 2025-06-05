@@ -24,7 +24,9 @@ public class SecurityConfig {
             .csrf().disable()
             .authorizeHttpRequests()
             .requestMatchers("/auth/**").permitAll()
-            .requestMatchers("/api/users/search").authenticated() // 새로운 라인 추가
+            .requestMatchers("/api/users/search").authenticated()
+            .requestMatchers("/api/contracts/files/**").authenticated() // 파일 다운로드 경로 추가
+            .requestMatchers("/api/contracts/**").authenticated() // 모든 계약서 API
             .anyRequest().authenticated()
             .and()
             .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider),
@@ -32,10 +34,11 @@ public class SecurityConfig {
 
         return http.build();
     }
+    
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("https://localhost:5173")); // ✅ React 개발 서버
+        configuration.setAllowedOrigins(List.of("https://localhost:5173")); // React 개발 서버
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Content-Type","X-XSRF-TOKEN","Authorization"));
         configuration.setAllowCredentials(true);
