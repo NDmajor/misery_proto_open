@@ -247,36 +247,93 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     }
   };
 
-  // 현재 사용자가 이미 서명했는지 확인
   const hasUserSigned = () => {
     if (!contract || !contract.currentVersion || !currentUser) {
+      console.log('서명 확인: 기본 조건 실패');
       return false;
     }
     
-    const userUuid = currentUser.uuid || currentUser.id?.toString();
+    // 현재 사용자의 UUID 가져오기 (여러 형태 지원)
+    const userUuid = currentUser.uuid || currentUser.userUuid || currentUser.id?.toString();
+    console.log('서명 확인 - userUuid:', userUuid);
+    console.log('서명 목록:', contract.currentVersion.signatures);
     
     const signatureMatches = contract.currentVersion.signatures.map(signature => {
       const uuidMatch = signature.signerUuid === userUuid;
       const idMatch = signature.signerUuid === currentUser.id?.toString();
-      return uuidMatch || idMatch;
+      const uuidMatch2 = currentUser.uuid && signature.signerUuid === currentUser.uuid;
+      const uuidMatch3 = currentUser.userUuid && signature.signerUuid === currentUser.userUuid;
+      
+      console.log('서명 비교:', {
+        signerUuid: signature.signerUuid,
+        userUuid: userUuid,
+        uuidMatch,
+        idMatch,
+        uuidMatch2,
+        uuidMatch3
+      });
+      
+      return uuidMatch || idMatch || uuidMatch2 || uuidMatch3;
     });
     
-    return signatureMatches.some(match => match);
+    const result = signatureMatches.some(match => match);
+    console.log('서명 확인 결과:', result);
+    
+    return result;
   };
 
-  // 현재 사용자가 참여자인지 확인
-  const isUserParticipant = () => {
-    if (!contract || !currentUser) return false;
+// 현재 사용자가 참여자인지 확인 (수정된 버전)
+const isUserParticipant = () => {
+  if (!contract || !currentUser) {
+    console.log('contract 또는 currentUser가 없음:', { contract: !!contract, currentUser: !!currentUser });
+    return false;
+  }
+  
+  console.log('currentUser 정보:', currentUser);
+  console.log('contract.participants:', contract.participants);
+  
+  // 생성자인지 확인
+  const isCreator = contract.createdBy.id === currentUser.id;
+  console.log('isCreator 확인:', { 
+    createdById: contract.createdBy.id, 
+    currentUserId: currentUser.id, 
+    isCreator 
+  });
+  
+  // 현재 사용자의 UUID 가져오기 (여러 형태 지원)
+  const userUuid = currentUser.uuid || currentUser.userUuid || currentUser.id?.toString();
+  console.log('userUuid:', userUuid);
+  
+  // 참여자 목록에서 확인
+  const isParticipant = contract.participants.some(participant => {
+    console.log('참여자 비교:', {
+      participantUuid: participant.userUuid,
+      userUuid: userUuid,
+      participantUsername: participant.username,
+      currentUsername: currentUser.username
+    });
     
-    const isCreator = contract.createdBy.id === currentUser.id;
-    const userUuid = currentUser.uuid || currentUser.id?.toString();
-    const isParticipant = contract.participants.some(participant => 
-      participant.userUuid === userUuid || 
-      participant.userUuid === currentUser.id?.toString()
-    );
+    // UUID로 비교
+    if (participant.userUuid === userUuid) return true;
     
-    return isCreator || isParticipant;
-  };
+    // ID를 문자열로 변환해서 비교
+    if (participant.userUuid === currentUser.id?.toString()) return true;
+    
+    // 혹시 UUID 필드명이 다른 경우를 위한 추가 비교
+    if (currentUser.uuid && participant.userUuid === currentUser.uuid) return true;
+    if (currentUser.userUuid && participant.userUuid === currentUser.userUuid) return true;
+    
+    // 이메일로도 한번 확인 (백업)
+    if (participant.email === currentUser.email) return true;
+    
+    return false;
+  });
+  
+  console.log('isParticipant 결과:', isParticipant);
+  console.log('최종 결과 (isCreator || isParticipant):', isCreator || isParticipant);
+  
+  return isCreator || isParticipant;
+};
 
   // 현재 사용자가 서명할 수 있는지 확인
   const canSign = () => {
@@ -293,12 +350,14 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   const getCurrentUserSignature = () => {
     if (!contract || !contract.currentVersion || !currentUser) return null;
     
-    const userUuid = currentUser.uuid || currentUser.id?.toString();
+    const userUuid = currentUser.uuid || currentUser.userUuid || currentUser.id?.toString();
     if (!userUuid) return null;
     
     return contract.currentVersion.signatures.find(signature => {
       return signature.signerUuid === userUuid || 
-             signature.signerUuid === currentUser.id?.toString();
+             signature.signerUuid === currentUser.id?.toString() ||
+             (currentUser.uuid && signature.signerUuid === currentUser.uuid) ||
+             (currentUser.userUuid && signature.signerUuid === currentUser.userUuid);
     });
   };
 
