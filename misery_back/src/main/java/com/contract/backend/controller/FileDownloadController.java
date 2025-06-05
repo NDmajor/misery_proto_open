@@ -38,10 +38,7 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/contracts")
-@CrossOrigin(origins = "https://localhost:5173", 
-             allowedHeaders = "*", 
-             allowCredentials = "true",
-             methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
+// CORS 어노테이션 제거 - SecurityConfig에서 전역으로 처리
 public class FileDownloadController {
 
     private static final Logger logger = LoggerFactory.getLogger(FileDownloadController.class);
@@ -73,14 +70,8 @@ public class FileDownloadController {
     public ResponseEntity<byte[]> downloadFile(
             @PathVariable String filePath,
             @AuthenticationPrincipal String userUuid,
-            HttpServletRequest request,
-            HttpServletResponse response
+            HttpServletRequest request
     ) {
-        // CORS 헤더를 응답에 명시적으로 추가
-        response.setHeader("Access-Control-Allow-Origin", "*");
-        response.setHeader("Access-Control-Allow-Credentials", "true");
-        response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Type, Content-Length");
-
         try {
             logger.info("파일 다운로드 요청 - filePath: {}, userUuid: {}, Origin: {}", 
                 filePath, userUuid, request.getHeader("Origin"));
@@ -97,11 +88,17 @@ public class FileDownloadController {
 
             if (versionOpt.isEmpty()) {
                 logger.warn("파일 경로에 해당하는 계약 버전을 찾을 수 없음: {}", filePath);
-                return ResponseEntity.notFound().build();
+                throw new CustomException(CustomExceptionEnum.CONTRACT_NOT_FOUND);
             }
 
             ContractVersionEntity version = versionOpt.get();
             ContractEntity contract = version.getContract();
+
+            // 삭제된 계약서 체크
+            if (contract.getDeletedAt() != null) {
+                logger.warn("삭제된 계약서에 대한 파일 접근 시도 - contractId: {}", contract.getId());
+                throw new CustomException(CustomExceptionEnum.CONTRACT_NOT_FOUND);
+            }
 
             // 권한 검사
             boolean isCreator = contract.getCreatedBy().getUuid().equals(userUuid);
@@ -109,7 +106,7 @@ public class FileDownloadController {
 
             if (!isCreator && !isParticipant) {
                 logger.warn("파일 다운로드 권한 없음 - contractId: {}, userUuid: {}", contract.getId(), userUuid);
-                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+                throw new CustomException(CustomExceptionEnum.UNAUTHORIZED);
             }
 
             // S3에서 파일 다운로드
@@ -124,19 +121,11 @@ public class FileDownloadController {
                 byte[] fileBytes = readAllBytes(s3Object);
                 
                 HttpHeaders headers = new HttpHeaders();
-                
-                // CORS 헤더
-                headers.set("Access-Control-Allow-Origin", "*");
-                headers.set("Access-Control-Allow-Credentials", "true");
-                headers.set("Access-Control-Expose-Headers", "Content-Disposition, Content-Type, Content-Length");
-                
-                // 파일 헤더
                 headers.setContentType(MediaType.APPLICATION_PDF);
                 headers.setContentLength(fileBytes.length);
-                headers.set("Content-Disposition", "inline");
-                headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
-                headers.set("Pragma", "no-cache");
-                headers.set("Expires", "0");
+                headers.set(HttpHeaders.CONTENT_DISPOSITION, "inline");
+                headers.set(HttpHeaders.CACHE_CONTROL, "private, max-age=3600");
+                headers.set(HttpHeaders.ETAG, "\"" + version.getFileHash() + "\"");
 
                 logger.info("파일 다운로드 성공 - filePath: {}, fileSize: {} bytes", filePath, fileBytes.length);
                 
@@ -144,26 +133,21 @@ public class FileDownloadController {
 
             } catch (NoSuchKeyException e) {
                 logger.error("S3에서 파일을 찾을 수 없음 - filePath: {}", filePath);
-                return ResponseEntity.notFound().build();
+                throw new CustomException(CustomExceptionEnum.CONTRACT_NOT_FOUND);
+            } catch (SdkException e) {
+                logger.error("S3 파일 다운로드 중 SDK 오류 - filePath: {}, error: {}", filePath, e.getMessage());
+                throw new RuntimeException("파일 다운로드 중 오류가 발생했습니다: " + e.getMessage(), e);
             }
 
+        } catch (CustomException e) {
+            logger.error("파일 다운로드 권한 오류 - filePath: {}, error: {}", filePath, e.getMessage());
+            throw e;
         } catch (Exception e) {
             logger.error("파일 다운로드 중 오류 - filePath: {}, error: {}", filePath, e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            throw new RuntimeException("파일 다운로드 중 오류가 발생했습니다: " + e.getMessage(), e);
         }
     }
 
-    @RequestMapping(value = "/files/**", method = RequestMethod.OPTIONS)
-    public ResponseEntity<String> handleOptions(HttpServletRequest request) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.add("Access-Control-Allow-Origin", "*");
-        headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        headers.add("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, X-Requested-With");
-        headers.add("Access-Control-Allow-Credentials", "true");
-        headers.add("Access-Control-Max-Age", "3600");
-        
-        return new ResponseEntity<>("", headers, HttpStatus.OK);
-    }
     // InputStream을 byte[]로 읽는 헬퍼 메소드
     private byte[] readAllBytes(InputStream inputStream) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();

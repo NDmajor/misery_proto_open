@@ -10,16 +10,7 @@ import * as S from './ContractDetailModal.styles';
 import { ModalHeader, ModalLogo, LogoCircle, CloseButton, ModalFooter, FooterButton } from './styles';
 import CustomModal from './Modal'; 
 
-import { getContractDetails, 
-  signContract, 
-  getCurrentUser, 
-  downloadFileDirectly, 
-  verifyContractIntegrity, 
-  getContractPreviewUrl,         
-  downloadContractDirectly,
-  getContractVersionPreviewUrl,   
-  downloadContractVersionDirectly      
-} from '../../utils/api';
+import { getContractDetails, signContract, getCurrentUser, downloadFileDirectly, verifyContractIntegrity, getContractPreviewUrl,downloadContractDirectly,  } from '../../utils/api';
 
 // react-pdf worker 설정
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
@@ -262,29 +253,6 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     }
   }, [contract, isOpen, pdfFile]);
 
-  useEffect(() => {
-    if (contract?.id && !pdfUrl && isOpen) {
-      generatePdfUrl(contract.id);
-    }
-  }, [contract, isOpen]);
-
-  // generatePdfUrl 함수 업데이트
-const generatePdfUrl = async (contractId: number) => {
-  try {
-    setPdfLoading(true);
-    // 계약서 ID 기반으로 미리보기 URL 생성
-    const url = await getContractPreviewUrl(contractId);
-    setPdfUrl(url);
-  } catch (err) {
-    console.error('PDF 미리보기 로드 오류:', err);
-    setError('PDF 파일을 불러오는 중 오류가 발생했습니다.');
-  } finally {
-    setPdfLoading(false);
-  }
-};
-
-
-
   const loadContractDetails = async (currentContractId: number) => {
     if (!currentContractId) return;
     
@@ -362,21 +330,21 @@ const generatePdfUrl = async (contractId: number) => {
     setScale(1.0);
   };
 
-  // downloadPdf 함수 업데이트
-const downloadPdf = async () => {
-  if (!contract?.id) return;
-  
-  try {
-    // 계약서 제목 기반 파일명 생성
-    const fileName = `${contract.title.replace(/[^a-zA-Z0-9가-힣\s]/g, '').replace(/\s+/g, '_')}_v${contract.currentVersion?.versionNumber || 1}.pdf`;
+  const downloadPdf = async () => { 
+    if (!contract?.currentVersion?.filePath) {
+      alert('다운로드할 파일이 없습니다.');
+      return;
+    }
     
-    // 계약서 ID 기반으로 다운로드
-    await downloadContractDirectly(contract.id, fileName);
-  } catch (err) {
-    console.error('다운로드 오류:', err);
-    alert('파일 다운로드 중 오류가 발생했습니다.');
-  }
-};
+    try {
+      const fileName = `${contract.title}_v${contract.currentVersion.versionNumber}.pdf`;
+      await downloadFileDirectly(contract.currentVersion.filePath, fileName);
+    } catch (err) {
+      console.error('다운로드 오류:', err);
+      const errorMessage = err instanceof Error ? err.message : '파일 다운로드 중 오류가 발생했습니다.';
+      alert(errorMessage);
+    }
+  };
 
   const handleRetryPdfLoad = () => {
     if (contract?.currentVersion?.filePath) {
