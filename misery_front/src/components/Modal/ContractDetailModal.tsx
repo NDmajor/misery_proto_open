@@ -1,15 +1,12 @@
+// src/components/Modal/ContractDetailModal.tsx
 import React, { useState, useEffect } from 'react';
 import Modal from 'react-modal';
 import moment from 'moment';
 
-// Modal 스타일 관련 임포트
-import CustomModal from './Modal'
-import {
-  ModalHeader, ModalLogo, LogoCircle, CloseButton, ModalBody, ModalTitle,
-  ModalDesc, ModalFooter, FooterButton, InfoDisplay, InputGroup, StyledLabel
-} from './styles'
+import * as S from './ContractDetailModal.styles'; // 변경된 스타일 파일
+import { ModalHeader, ModalLogo, LogoCircle, CloseButton, ModalFooter, FooterButton } from './styles'; // 공용 모달 스타일
+import CustomModal from './Modal'; 
 
-// API 함수 임포트 (실제로는 utils/api에서 임포트)
 import { getContractDetails, signContract, getCurrentUser, downloadContractFile, downloadFileDirectly, verifyContractIntegrity } from '../../utils/api';
 
 // 타입 정의
@@ -17,7 +14,39 @@ interface ContractDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   contractId: number | null;
-  onContractUpdate?: () => void; // 계약서 업데이트 후 콜백
+  onContractUpdate?: () => void;
+}
+
+interface UserSignature {
+  signerUuid: string;
+  signerUsername: string;
+  signedAt: string;
+  signatureHash: string;
+}
+
+interface Version {
+  id: number;
+  versionNumber: number;
+  filePath: string;
+  fileHash: string;
+  status: 'PENDING_SIGNATURE' | 'SIGNED' | 'ARCHIVED';
+  createdAt: string;
+  storageProvider: string;
+  bucketName: string;
+  signatures: UserSignature[];
+}
+
+interface Participant {
+  userUuid: string;
+  username: string;
+  email: string;
+  role: 'INITIATOR' | 'COUNTERPARTY';
+}
+
+interface ContractUser {
+  id: number;
+  username: string;
+  email: string;
 }
 
 interface ContractDetail {
@@ -27,50 +56,34 @@ interface ContractDetail {
   status: 'OPEN' | 'CLOSED' | 'CANCELLED';
   createdAt: string;
   updatedAt?: string;
-  createdBy: {
-    id: number;
-    username: string;
-    email: string;
-  };
-  updatedBy?: {
-    id: number;
-    username: string;
-    email: string;
-  };
-  currentVersion?: {
-    id: number;
-    versionNumber: number;
-    filePath: string;
-    fileHash: string;
-    status: 'PENDING_SIGNATURE' | 'SIGNED' | 'ARCHIVED';
-    createdAt: string;
-    storageProvider: string;
-    bucketName: string;
-    signatures: Array<{
-      signerUuid: string;
-      signerUsername: string;
-      signedAt: string;
-      signatureHash: string;
-    }>;
-  };
-  participants: Array<{
-    userUuid: string;
-    username: string;
-    email: string;
-    role: 'INITIATOR' | 'COUNTERPARTY';
-  }>;
-  versionHistory: Array<{
-    id: number;
-    versionNumber: number;
-    status: string;
-    createdAt: string;
-    signatures: Array<{
-      signerUuid: string;
-      signerUsername: string;
-      signedAt: string;
-    }>;
-  }>;
+  createdBy: ContractUser;
+  updatedBy?: ContractUser;
+  currentVersion?: Version;
+  participants: Participant[];
+  versionHistory: Version[];
 }
+
+// currentUser 상태를 위한 타입
+interface CurrentUser extends ContractUser {
+  uuid?: string; // API 응답에 따라 uuid가 있을 수 있음
+  userUuid?: string;
+}
+
+// verificationResult 상태를 위한 타입
+interface VerificationStep {
+  status: string;
+  details: string;
+  discrepancies: string[];
+}
+interface VerificationResultData {
+  overallSuccess: boolean;
+  message: string;
+  verifiedAt: string;
+  dbVerification: VerificationStep;
+  blockchainVerification: VerificationStep;
+  // contractVersionId: number; // 필요시 추가
+}
+
 
 const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   isOpen,
@@ -82,15 +95,13 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [signing, setSigning] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [showPdfViewer, setShowPdfViewer] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null); // 타입 적용
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState<boolean>(false);
   const [verifying, setVerifying] = useState<boolean>(false);
-  const [verificationResult, setVerificationResult] = useState<any>(null);
+  const [verificationResult, setVerificationResult] = useState<VerificationResultData | null>(null); // 타입 적용
   const [showVerificationResult, setShowVerificationResult] = useState<boolean>(false);
 
-  // 현재 사용자 정보 로드
   useEffect(() => {
     const loadCurrentUser = async () => {
       try {
@@ -105,75 +116,96 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
 
     if (isOpen) {
       loadCurrentUser();
+    } else {
+      setContract(null);
+      setError(null);
+      setCurrentUser(null);
+      setVerificationResult(null);
+      setShowVerificationResult(false);
+      if (pdfUrl) {
+        URL.revokeObjectURL(pdfUrl);
+        setPdfUrl(null);
+      }
     }
-  }, [isOpen]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]); // pdfUrl 의존성 제거 (handleClose에서 처리 또는 isOpen false일때 처리)
 
-  // 계약서 상세 정보 로드
   useEffect(() => {
     if (isOpen && contractId) {
-      loadContractDetails();
+      const fetchDetailsAndPdf = async () => {
+        await loadContractDetails(contractId);
+      };
+      fetchDetailsAndPdf();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, contractId]);
 
-  const loadContractDetails = async () => {
-    if (!contractId) return;
+   useEffect(() => {
+    if (contract?.currentVersion?.filePath && !pdfUrl && isOpen) {
+      generatePdfUrl(contract.currentVersion.filePath);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contract, isOpen]); // isOpen 추가
+
+  const loadContractDetails = async (currentContractId: number) => {
+    if (!currentContractId) return;
     
     setLoading(true);
     setError(null);
+    setPdfLoading(true); 
+    if (pdfUrl) { // 이전 PDF URL 해제
+        URL.revokeObjectURL(pdfUrl);
+        setPdfUrl(null);
+    }
     
     try {
-      const response = await getContractDetails(contractId);
+      const response = await getContractDetails(currentContractId);
       if (response.success) {
         setContract(response.data);
       } else {
         setError(response.message || '계약서 정보를 불러올 수 없습니다.');
+        setPdfLoading(false);
       }
     } catch (err) {
       setError('계약서 정보를 불러오는 중 오류가 발생했습니다.');
       console.error('계약서 상세 로드 오류:', err);
+      setPdfLoading(false);
     } finally {
       setLoading(false);
     }
   };
 
-  // PDF 미리보기 URL 생성
   const generatePdfUrl = async (filePath: string) => {
     try {
-      setPdfLoading(true);
-      
-      // 새로운 API 함수 사용
+      setPdfLoading(true); 
       const blob = await downloadContractFile(filePath);
       const url = URL.createObjectURL(blob);
       setPdfUrl(url);
-      setShowPdfViewer(true);
     } catch (err) {
       console.error('PDF 로드 오류:', err);
-      alert('PDF 파일을 불러오는 중 오류가 발생했습니다.');
+      setError('PDF 파일을 불러오는 중 오류가 발생했습니다.'); 
     } finally {
       setPdfLoading(false);
     }
   };
 
-  // PDF 다운로드
-  const downloadPdf = async (filePath: string, fileName: string) => {
+  const downloadPdf = async () => { 
+    if (!contract?.currentVersion?.filePath) return;
     try {
-      // 새로운 API 함수 사용
-      await downloadFileDirectly(filePath, fileName || `계약서_${contract?.title || 'document'}.pdf`);
+      const fileName = `${contract.title}_v${contract.currentVersion.versionNumber}.pdf`;
+      await downloadFileDirectly(contract.currentVersion.filePath, fileName);
     } catch (err) {
       console.error('다운로드 오류:', err);
       alert('파일 다운로드 중 오류가 발생했습니다.');
     }
   };
-
-  // 무결성 검증
+  
   const handleVerifyIntegrity = async () => {
     if (!contract || !contract.currentVersion) {
       alert('현재 버전 정보가 없습니다.');
       return;
     }
-
     setVerifying(true);
-    
     try {
       const response = await verifyContractIntegrity(contract.id, contract.currentVersion.versionNumber);
       if (response.success) {
@@ -190,26 +222,20 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     }
   };
 
-  // 계약서 서명
   const handleSign = async () => {
     if (!contractId || !contract) return;
-    
-    // 서명 확인 다이얼로그
     const confirmSign = window.confirm(
       `"${contract.title}" 계약서에 서명하시겠습니까?\n\n서명 후에는 취소할 수 없습니다.`
     );
-    
     if (!confirmSign) return;
-    
     setSigning(true);
-    
     try {
       const response = await signContract(contractId);
       if (response.success) {
         alert('계약서에 성공적으로 서명했습니다.');
-        await loadContractDetails(); // 계약서 정보 새로고침
+        await loadContractDetails(contractId); 
         if (onContractUpdate) {
-          onContractUpdate(); // 부모 컴포넌트에 업데이트 알림
+          onContractUpdate();
         }
       } else {
         alert(response.message || '서명에 실패했습니다.');
@@ -223,234 +249,93 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     }
   };
 
-  // 모달 닫기
   const handleClose = () => {
-    setContract(null);
-    setError(null);
-    setCurrentUser(null);
-    setShowPdfViewer(false);
-    setVerificationResult(null);
-    setShowVerificationResult(false);
-    if (pdfUrl) {
-      URL.revokeObjectURL(pdfUrl);
-      setPdfUrl(null);
+    if (pdfUrl) { // 모달 닫을 때 URL 해제
+        URL.revokeObjectURL(pdfUrl);
+        setPdfUrl(null);
     }
     onClose();
   };
 
-  // PDF 뷰어 닫기
-  const closePdfViewer = () => {
-    setShowPdfViewer(false);
-    if (pdfUrl) {
-      URL.revokeObjectURL(pdfUrl);
-      setPdfUrl(null);
-    }
-  };
-
   const hasUserSigned = () => {
     if (!contract || !contract.currentVersion || !currentUser) {
-      console.log('서명 확인: 기본 조건 실패');
       return false;
     }
-    
-    // 현재 사용자의 UUID 가져오기 (여러 형태 지원)
     const userUuid = currentUser.uuid || currentUser.userUuid || currentUser.id?.toString();
-    console.log('서명 확인 - userUuid:', userUuid);
-    console.log('서명 목록:', contract.currentVersion.signatures);
-    
-    const signatureMatches = contract.currentVersion.signatures.map(signature => {
-      const uuidMatch = signature.signerUuid === userUuid;
-      const idMatch = signature.signerUuid === currentUser.id?.toString();
-      const uuidMatch2 = currentUser.uuid && signature.signerUuid === currentUser.uuid;
-      const uuidMatch3 = currentUser.userUuid && signature.signerUuid === currentUser.userUuid;
-      
-      console.log('서명 비교:', {
-        signerUuid: signature.signerUuid,
-        userUuid: userUuid,
-        uuidMatch,
-        idMatch,
-        uuidMatch2,
-        uuidMatch3
-      });
-      
-      return uuidMatch || idMatch || uuidMatch2 || uuidMatch3;
-    });
-    
-    const result = signatureMatches.some(match => match);
-    console.log('서명 확인 결과:', result);
-    
-    return result;
+    return contract.currentVersion.signatures.some(signature => 
+        signature.signerUuid === userUuid || 
+        signature.signerUuid === currentUser.id?.toString() ||
+        (currentUser.uuid && signature.signerUuid === currentUser.uuid) ||
+        (currentUser.userUuid && signature.signerUuid === currentUser.userUuid)
+    );
   };
 
-// 현재 사용자가 참여자인지 확인 (수정된 버전)
-const isUserParticipant = () => {
-  if (!contract || !currentUser) {
-    console.log('contract 또는 currentUser가 없음:', { contract: !!contract, currentUser: !!currentUser });
-    return false;
-  }
-  
-  console.log('currentUser 정보:', currentUser);
-  console.log('contract.participants:', contract.participants);
-  
-  // 생성자인지 확인
-  const isCreator = contract.createdBy.id === currentUser.id;
-  console.log('isCreator 확인:', { 
-    createdById: contract.createdBy.id, 
-    currentUserId: currentUser.id, 
-    isCreator 
-  });
-  
-  // 현재 사용자의 UUID 가져오기 (여러 형태 지원)
-  const userUuid = currentUser.uuid || currentUser.userUuid || currentUser.id?.toString();
-  console.log('userUuid:', userUuid);
-  
-  // 참여자 목록에서 확인
-  const isParticipant = contract.participants.some(participant => {
-    console.log('참여자 비교:', {
-      participantUuid: participant.userUuid,
-      userUuid: userUuid,
-      participantUsername: participant.username,
-      currentUsername: currentUser.username
-    });
-    
-    // UUID로 비교
-    if (participant.userUuid === userUuid) return true;
-    
-    // ID를 문자열로 변환해서 비교
-    if (participant.userUuid === currentUser.id?.toString()) return true;
-    
-    // 혹시 UUID 필드명이 다른 경우를 위한 추가 비교
-    if (currentUser.uuid && participant.userUuid === currentUser.uuid) return true;
-    if (currentUser.userUuid && participant.userUuid === currentUser.userUuid) return true;
-    
-    // 이메일로도 한번 확인 (백업)
-    if (participant.email === currentUser.email) return true;
-    
-    return false;
-  });
-  
-  console.log('isParticipant 결과:', isParticipant);
-  console.log('최종 결과 (isCreator || isParticipant):', isCreator || isParticipant);
-  
-  return isCreator || isParticipant;
-};
+  const isUserParticipant = () => {
+    if (!contract || !currentUser) {
+      return false;
+    }
+    const isCreator = contract.createdBy.id === currentUser.id;
+    const userUuid = currentUser.uuid || currentUser.userUuid || currentUser.id?.toString();
+    const isParticipantInList = contract.participants.some(participant => 
+        participant.userUuid === userUuid ||
+        participant.userUuid === currentUser.id?.toString() ||
+        (currentUser.uuid && participant.userUuid === currentUser.uuid) ||
+        (currentUser.userUuid && participant.userUuid === currentUser.userUuid) ||
+        participant.email === currentUser.email
+    );
+    return isCreator || isParticipantInList;
+  };
 
-  // 현재 사용자가 서명할 수 있는지 확인
   const canSign = () => {
     if (!contract || !contract.currentVersion || !currentUser) return false;
     if (contract.status !== 'OPEN') return false;
     if (contract.currentVersion.status !== 'PENDING_SIGNATURE') return false;
     if (hasUserSigned()) return false;
     if (!isUserParticipant()) return false;
-    
     return true;
   };
 
-  // 현재 사용자의 서명 정보 가져오기
   const getCurrentUserSignature = () => {
     if (!contract || !contract.currentVersion || !currentUser) return null;
-    
     const userUuid = currentUser.uuid || currentUser.userUuid || currentUser.id?.toString();
     if (!userUuid) return null;
-    
-    return contract.currentVersion.signatures.find(signature => {
-      return signature.signerUuid === userUuid || 
-             signature.signerUuid === currentUser.id?.toString() ||
-             (currentUser.uuid && signature.signerUuid === currentUser.uuid) ||
-             (currentUser.userUuid && signature.signerUuid === currentUser.userUuid);
-    });
+    return contract.currentVersion.signatures.find(signature => 
+        signature.signerUuid === userUuid ||
+        signature.signerUuid === currentUser.id?.toString() ||
+        (currentUser.uuid && signature.signerUuid === currentUser.uuid) ||
+        (currentUser.userUuid && signature.signerUuid === currentUser.userUuid)
+    );
   };
 
-  // 서명 상태에 따른 메시지와 스타일 결정
   const getSigningStatusDisplay = () => {
     if (!contract || !currentUser) return null;
-    
     if (!isUserParticipant()) {
-      return {
-        type: 'info',
-        title: 'ℹ️ 참여자 아님',
-        message: '이 계약서의 참여자가 아닙니다.',
-        backgroundColor: '#fff3e0',
-        borderColor: '#ff9800',
-        textColor: '#f57c00'
-      };
+      return { type: 'info', title: 'ℹ️ 참여자 아님', message: '이 계약서의 참여자가 아닙니다.', backgroundColor: '#fff3e0', borderColor: '#ff9800', textColor: '#f57c00' };
     }
-
     if (hasUserSigned()) {
       const userSignature = getCurrentUserSignature();
-      return {
-        type: 'success',
-        title: '✅ 서명 완료',
-        message: userSignature 
-          ? `${moment(userSignature.signedAt).format('YYYY년 MM월 DD일 HH:mm')}에 서명을 완료했습니다.`
-          : '이미 서명을 완료했습니다.',
-        backgroundColor: '#e8f5e8',
-        borderColor: '#4caf50',
-        textColor: '#2e7d32'
-      };
+      return { type: 'success', title: '✅ 서명 완료', message: userSignature ? `${moment(userSignature.signedAt).format('YYYY년 MM월 DD일 HH:mm')}에 서명을 완료했습니다.` : '이미 서명을 완료했습니다.', backgroundColor: '#e8f5e8', borderColor: '#4caf50', textColor: '#2e7d32' };
     }
-    
     if (contract.status === 'CLOSED') {
-      return {
-        type: 'info',
-        title: 'ℹ️ 계약 완료',
-        message: '이미 완료된 계약서입니다.',
-        backgroundColor: '#e3f2fd',
-        borderColor: '#2196f3',
-        textColor: '#1976d2'
-      };
+      return { type: 'info', title: 'ℹ️ 계약 완료', message: '이미 완료된 계약서입니다.', backgroundColor: '#e3f2fd', borderColor: '#2196f3', textColor: '#1976d2' };
     }
-    
     if (contract.status === 'CANCELLED') {
-      return {
-        type: 'warning',
-        title: '⚠️ 계약 취소',
-        message: '취소된 계약서입니다.',
-        backgroundColor: '#ffebee',
-        borderColor: '#f44336',
-        textColor: '#d32f2f'
-      };
+      return { type: 'warning', title: '⚠️ 계약 취소', message: '취소된 계약서입니다.', backgroundColor: '#ffebee', borderColor: '#f44336', textColor: '#d32f2f' };
     }
-    
     if (contract.currentVersion?.status === 'SIGNED') {
-      return {
-        type: 'info',
-        title: 'ℹ️ 서명 완료',
-        message: '모든 서명이 완료된 계약서입니다.',
-        backgroundColor: '#e8f5e8',
-        borderColor: '#4caf50',
-        textColor: '#2e7d32'
-      };
+      return { type: 'info', title: 'ℹ️ 서명 완료', message: '모든 서명이 완료된 계약서입니다.', backgroundColor: '#e8f5e8', borderColor: '#4caf50', textColor: '#2e7d32' };
     }
-    
     if (contract.currentVersion?.status === 'ARCHIVED') {
-      return {
-        type: 'info',
-        title: 'ℹ️ 보관됨',
-        message: '보관된 버전입니다.',
-        backgroundColor: '#f5f5f5',
-        borderColor: '#9e9e9e',
-        textColor: '#666'
-      };
+      return { type: 'info', title: 'ℹ️ 보관됨', message: '보관된 버전입니다.', backgroundColor: '#f5f5f5', borderColor: '#9e9e9e', textColor: '#666' };
     }
-
     if (canSign()) {
-      return {
-        type: 'canSign',
-        title: '✓ 서명 가능',
-        message: '이 계약서에 서명할 수 있습니다.',
-        backgroundColor: '#e8f5e8',
-        borderColor: '#4caf50',
-        textColor: '#2e7d32'
-      };
+      return { type: 'canSign', title: '✓ 서명 가능', message: '이 계약서에 서명할 수 있습니다.', backgroundColor: '#e8f5e8', borderColor: '#4caf50', textColor: '#2e7d32' };
     }
-
     return null;
   };
-
+  
   const statusDisplay = getSigningStatusDisplay();
 
-  // 상태 텍스트 변환
   const getStatusText = (status: string) => {
     switch (status) {
       case 'OPEN': return '진행중';
@@ -463,25 +348,16 @@ const isUserParticipant = () => {
     }
   };
 
-  // 상태 색상
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'OPEN':
-      case 'PENDING_SIGNATURE':
-        return '#1976d2';
-      case 'CLOSED':
-      case 'SIGNED':
-        return '#388e3c';
-      case 'CANCELLED':
-        return '#d32f2f';
-      case 'ARCHIVED':
-        return '#666';
-      default:
-        return '#666';
+      case 'OPEN': case 'PENDING_SIGNATURE': return '#1976d2';
+      case 'CLOSED': case 'SIGNED': return '#388e3c';
+      case 'CANCELLED': return '#d32f2f';
+      case 'ARCHIVED': return '#666';
+      default: return '#666';
     }
   };
 
-  // 역할 텍스트 변환
   const getRoleText = (role: string) => {
     switch (role) {
       case 'INITIATOR': return '계약자';
@@ -489,566 +365,250 @@ const isUserParticipant = () => {
       default: return role;
     }
   };
-
-  // 검증 상태 텍스트 변환
-  const getVerificationStatusText = (status: string) => {
-    switch (status) {
+  
+  const getVerificationStatusText = (vStatus: string) => {
+    switch (vStatus) {
       case 'SUCCESS': return '✅ 성공';
       case 'FAILED': return '❌ 실패';
       case 'DATA_NOT_FOUND': return '⚠️ 데이터 없음';
       case 'ERROR': return '🔴 오류';
       case 'NOT_CHECKED': return '⏸️ 검사 안함';
-      default: return status;
-    }
-  };
-
-  // 검증 상태 색상 반환
-  const getVerificationStatusColor = (status: string) => {
-    switch (status) {
-      case 'SUCCESS':
-        return { background: '#e8f5e8', border: '#4caf50' };
-      case 'FAILED':
-        return { background: '#ffebee', border: '#f44336' };
-      case 'DATA_NOT_FOUND':
-        return { background: '#fff3e0', border: '#ff9800' };
-      case 'ERROR':
-        return { background: '#ffebee', border: '#f44336' };
-      case 'NOT_CHECKED':
-        return { background: '#f5f5f5', border: '#9e9e9e' };
-      default:
-        return { background: '#f5f5f5', border: '#e0e0e0' };
+      default: return vStatus;
     }
   };
 
   return (
-    <>
-      <Modal
-        isOpen={isOpen}
-        onRequestClose={handleClose}
-        style={CustomModal}
-        contentLabel="계약서 상세"
-      >
-        <ModalHeader>
-          <ModalLogo>
-            <LogoCircle>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
-              </svg>
-            </LogoCircle>
-          </ModalLogo>
-          <CloseButton type="button" onClick={handleClose}>
+    <Modal
+      isOpen={isOpen}
+      onRequestClose={handleClose}
+      style={{
+        ...CustomModal,
+        content: { 
+          ...CustomModal.content,
+          width: '90%', 
+          maxWidth: '1200px', 
+          height: '80vh', 
+          padding: '0', 
+        },
+      }}
+      contentLabel="계약서 상세"
+    >
+      <ModalHeader> {/* 공용 스타일 사용 */}
+        <ModalLogo>
+          <LogoCircle>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
+              <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
             </svg>
-          </CloseButton>
-        </ModalHeader>
+          </LogoCircle>
+        </ModalLogo>
+        <CloseButton type="button" onClick={handleClose}> {/* 공용 스타일 사용 */}
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
+          </svg>
+        </CloseButton>
+      </ModalHeader>
 
-        <ModalBody>
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
-              계약서 정보를 불러오는 중...
-            </div>
-          ) : error ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#d32f2f' }}>
-              {error}
-            </div>
-          ) : contract ? (
+      <S.ModalBodyWrapper>
+        <S.PdfPreviewContainer>
+          {pdfLoading && <S.PdfMessage>PDF 미리보기 로딩 중...</S.PdfMessage>}
+          {!pdfLoading && pdfUrl && <S.PdfFrame src={pdfUrl} title={`${contract?.title || '계약서'} 미리보기`} />}
+          {!pdfLoading && !pdfUrl && contract?.currentVersion?.filePath && !error && (
+            <S.PdfMessage>PDF를 불러오고 있습니다...</S.PdfMessage>
+          )}
+           {!pdfLoading && !pdfUrl && !contract?.currentVersion?.filePath && !error && (
+             <S.PdfMessage>표시할 PDF 파일이 없습니다.</S.PdfMessage>
+          )}
+          {error && !pdfLoading && <S.PdfMessage style={{color: 'red'}}>{error}</S.PdfMessage>}
+        </S.PdfPreviewContainer>
+
+        <S.DetailsContainer>
+          {loading && !contract && <S.PdfMessage>계약서 정보를 불러오는 중...</S.PdfMessage>}
+          {/* error state는 pdf 로딩 에러와 통합하여 PdfPreviewContainer에서 주로 처리 */}
+          
+          {contract && (
             <>
-              <ModalTitle>{contract.title}</ModalTitle>
+              <S.InfoSectionTitle style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>{contract.title}</S.InfoSectionTitle>
               
-              {/* PDF 관련 버튼들 */}
+              <S.ActionButtonGroup>
+                {contract.currentVersion && (
+                    <>
+                        <S.ActionButton variant="success" onClick={downloadPdf}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z" /></svg>
+                            PDF 다운로드
+                        </S.ActionButton>
+                        <S.ActionButton variant="warning" onClick={handleVerifyIntegrity} disabled={verifying}>
+                            {verifying ? '검증 중...' : (
+                                <>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M23,12L20.56,9.22L20.9,5.54L17.29,4.72L15.4,1.54L12,3L8.6,1.54L6.71,4.72L3.1,5.53L3.44,9.21L1,12L3.44,14.78L3.1,18.47L6.71,19.29L8.6,22.47L12,21L15.4,22.46L17.29,19.28L20.9,18.46L20.56,14.78L23,12M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z"/></svg>
+                                무결성 검증
+                                </>
+                            )}
+                        </S.ActionButton>
+                    </>
+                )}
+              </S.ActionButtonGroup>
+
+              <S.InfoSection>
+                <S.InfoItem>
+                  <strong>계약 상태:</strong> 
+                  <S.StatusBadge statusColor={getStatusColor(contract.status)}>
+                    {getStatusText(contract.status)}
+                  </S.StatusBadge>
+                </S.InfoItem>
+                {contract.description && (
+                  <S.InfoItem><strong>설명:</strong> {contract.description}</S.InfoItem>
+                )}
+                <S.InfoItem><strong>생성일:</strong> {moment(contract.createdAt).format('YYYY년 MM월 DD일 HH:mm')}</S.InfoItem>
+                <S.InfoItem><strong>생성자:</strong> {contract.createdBy.username} ({contract.createdBy.email})</S.InfoItem>
+                {contract.updatedAt && contract.updatedBy && (
+                    <S.InfoItem><strong>최종 수정:</strong> {moment(contract.updatedAt).format('YYYY년 MM월 DD일 HH:mm')} by {contract.updatedBy.username}</S.InfoItem>
+                )}
+              </S.InfoSection>
+
               {contract.currentVersion && (
-                <div style={{ 
-                  display: 'flex', 
-                  gap: '8px', 
-                  marginBottom: '1rem',
-                  flexWrap: 'wrap'
-                }}>
-                  <button
-                    onClick={() => generatePdfUrl(contract.currentVersion!.filePath)}
-                    disabled={pdfLoading}
-                    style={{
-                      padding: '8px 16px',
-                      backgroundColor: '#1976d2',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: pdfLoading ? 'not-allowed' : 'pointer',
-                      fontSize: '0.875rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}
-                  >
-                    {pdfLoading ? (
-                      '로딩 중...'
-                    ) : (
-                      <>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
-                        </svg>
-                        PDF 미리보기
-                      </>
-                    )}
-                  </button>
-                  
-                  <button
-                    onClick={() => downloadPdf(
-                      contract.currentVersion!.filePath, 
-                      `${contract.title}_v${contract.currentVersion!.versionNumber}.pdf`
-                    )}
-                    style={{
-                      padding: '8px 16px',
-                      backgroundColor: '#388e3c',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" />
-                      <path d="M12,11L16,15H13V19H11V15H8L12,11Z" />
-                    </svg>
-                    PDF 다운로드
-                  </button>
-
-                  <button
-                    onClick={handleVerifyIntegrity}
-                    disabled={verifying}
-                    style={{
-                      padding: '8px 16px',
-                      backgroundColor: verifying ? '#ccc' : '#ff9800',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: verifying ? 'not-allowed' : 'pointer',
-                      fontSize: '0.875rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}
-                  >
-                    {verifying ? (
-                      '검증 중...'
-                    ) : (
-                      <>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M23,12L20.56,9.22L20.9,5.54L17.29,4.72L15.4,1.54L12,3L8.6,1.54L6.71,4.72L3.1,5.53L3.44,9.21L1,12L3.44,14.78L3.1,18.47L6.71,19.29L8.6,22.47L12,21L15.4,22.46L17.29,19.28L20.9,18.46L20.56,14.78L23,12M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z"/>
-                        </svg>
-                        무결성 검증
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-
-              {/* 계약서 기본 정보 */}
-              <InfoDisplay style={{ marginBottom: '1rem' }}>
-                <strong>상태:</strong> 
-                <span style={{ color: getStatusColor(contract.status), marginLeft: '8px' }}>
-                  {getStatusText(contract.status)}
-                </span>
-              </InfoDisplay>
-
-              {contract.description && (
-                <InfoDisplay style={{ marginBottom: '1rem' }}>
-                  <strong>설명:</strong> {contract.description}
-                </InfoDisplay>
-              )}
-
-              <InfoDisplay style={{ marginBottom: '1rem' }}>
-                <strong>생성일:</strong> {moment(contract.createdAt).format('YYYY년 MM월 DD일 HH:mm')}
-              </InfoDisplay>
-
-              <InfoDisplay style={{ marginBottom: '1rem' }}>
-                <strong>생성자:</strong> {contract.createdBy.username} ({contract.createdBy.email})
-              </InfoDisplay>
-
-              {/* 현재 버전 정보 */}
-              {contract.currentVersion && (
-                <>
-                  <div style={{ 
-                    borderTop: '1px solid #e5e5e5', 
-                    paddingTop: '1rem', 
-                    marginTop: '1rem' 
-                  }}>
-                    <h3 style={{ 
-                      fontSize: '1.1rem', 
-                      fontWeight: 600, 
-                      marginBottom: '0.5rem',
-                      color: '#333'
-                    }}>
-                      현재 버전 (v{contract.currentVersion.versionNumber})
-                    </h3>
-                    
-                    <InfoDisplay style={{ marginBottom: '0.5rem' }}>
-                      <strong>상태:</strong> 
-                      <span style={{ color: getStatusColor(contract.currentVersion.status), marginLeft: '8px' }}>
+                <S.InfoSection>
+                  <S.InfoSectionTitle>
+                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M11,13V15H13V13H11M11,16V18H13V16H11M7,13V15H9V13H7M7,16V18H9V16H7Z" /></svg>
+                    현재 버전 (v{contract.currentVersion.versionNumber})
+                  </S.InfoSectionTitle>
+                  <S.InfoItem>
+                    <strong>버전 상태:</strong> 
+                    <S.StatusBadge statusColor={getStatusColor(contract.currentVersion.status)}>
                         {getStatusText(contract.currentVersion.status)}
-                      </span>
-                    </InfoDisplay>
-
-                    <InfoDisplay style={{ marginBottom: '0.5rem' }}>
-                      <strong>업로드일:</strong> {moment(contract.currentVersion.createdAt).format('YYYY년 MM월 DD일 HH:mm')}
-                    </InfoDisplay>
-
-                    <InfoDisplay style={{ marginBottom: '0.5rem' }}>
-                      <strong>파일 해시:</strong> 
-                      <span style={{ 
-                        fontFamily: 'monospace', 
-                        fontSize: '0.8rem', 
-                        background: '#f5f5f5',
-                        padding: '2px 4px',
-                        borderRadius: '2px',
-                        marginLeft: '8px'
-                      }}>
-                        {contract.currentVersion.fileHash.substring(0, 16)}...
-                      </span>
-                    </InfoDisplay>
-                  </div>
-                </>
+                    </S.StatusBadge>
+                  </S.InfoItem>
+                  <S.InfoItem><strong>업로드일:</strong> {moment(contract.currentVersion.createdAt).format('YYYY년 MM월 DD일 HH:mm')}</S.InfoItem>
+                  <S.InfoItem>
+                    <strong>파일 해시:</strong> 
+                    <S.FileHashText>{contract.currentVersion.fileHash.substring(0, 20)}...</S.FileHashText>
+                  </S.InfoItem>
+                </S.InfoSection>
               )}
 
-              {/* 참여자 목록 */}
               {contract.participants.length > 0 && (
-                <div style={{ 
-                  borderTop: '1px solid #e5e5e5', 
-                  paddingTop: '1rem', 
-                  marginTop: '1rem' 
-                }}>
-                  <h3 style={{ 
-                    fontSize: '1.1rem', 
-                    fontWeight: 600, 
-                    marginBottom: '0.5rem',
-                    color: '#333'
-                  }}>
+                <S.InfoSection>
+                  <S.InfoSectionTitle>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12,5.5A3.5,3.5 0 0,1 15.5,9A3.5,3.5 0 0,1 12,12.5A3.5,3.5 0 0,1 8.5,9A3.5,3.5 0 0,1 12,5.5M5,8C5.56,8 6.08,8.15 6.53,8.42C6.38,9.85 6.8,11.27 7.66,12.38C7.16,13.34 6.16,14 5,14A3,3 0 0,1 2,11A3,3 0 0,1 5,8M19,8A3,3 0 0,1 22,11A3,3 0 0,1 19,14C17.84,14 16.84,13.34 16.34,12.38C17.2,11.27 17.62,9.85 17.47,8.42C17.92,8.15 18.44,8 19,8M12,14C14.67,14 17,14.89 17,16V19H7V16C7,14.89 9.33,14 12,14Z" /></svg>
                     참여자 ({contract.participants.length}명)
-                  </h3>
-                  
-                  {contract.participants.map((participant, index) => (
-                    <InfoDisplay key={participant.userUuid} style={{ marginBottom: '0.5rem' }}>
+                  </S.InfoSectionTitle>
+                  {contract.participants.map((participant) => (
+                    <S.InfoItem key={participant.userUuid}>
                       <strong>{getRoleText(participant.role)}:</strong> 
                       {participant.username} ({participant.email})
-                    </InfoDisplay>
+                    </S.InfoItem>
                   ))}
-                </div>
+                </S.InfoSection>
               )}
 
-              {/* 서명 현황 */}
               {contract.currentVersion && contract.currentVersion.signatures.length > 0 && (
-                <div style={{ 
-                  borderTop: '1px solid #e5e5e5', 
-                  paddingTop: '1rem', 
-                  marginTop: '1rem' 
-                }}>
-                  <h3 style={{ 
-                    fontSize: '1.1rem', 
-                    fontWeight: 600, 
-                    marginBottom: '0.5rem',
-                    color: '#333'
-                  }}>
+                <S.InfoSection>
+                  <S.InfoSectionTitle>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19.35,10.04C18.67,6.59 15.64,4 12,4C9.11,4 6.6,5.64 5.35,8.04C2.34,8.36 0,10.91 0,14A6,6 0 0,0 6,20H19A5,5 0 0,0 19.35,10.04M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z" /></svg>
                     서명 현황 ({contract.currentVersion.signatures.length}명)
-                  </h3>
-                  
-                  {contract.currentVersion.signatures.map((signature, index) => {
+                  </S.InfoSectionTitle>
+                  {contract.currentVersion.signatures.map((signature) => {
                     const userUuid = currentUser?.uuid || currentUser?.id?.toString();
-                    const isCurrentUserSignature = signature.signerUuid === userUuid || 
-                                                  signature.signerUuid === currentUser?.id?.toString();
-                    
+                    const isCurrentUserSignature = signature.signerUuid === userUuid || signature.signerUuid === currentUser?.id?.toString();
                     return (
-                      <InfoDisplay key={signature.signerUuid} style={{ marginBottom: '0.5rem' }}>
+                      <S.InfoItem key={signature.signerUuid}>
                         <strong>{signature.signerUsername}:</strong> 
                         {moment(signature.signedAt).format('YYYY년 MM월 DD일 HH:mm')}에 서명
                         {currentUser && isCurrentUserSignature && (
-                          <span style={{ 
-                            color: '#388e3c', 
-                            fontWeight: 'bold', 
-                            marginLeft: '8px' 
-                          }}>
-                            (본인)
-                          </span>
+                          <S.StatusBadge statusColor="#388e3c">(본인)</S.StatusBadge>
                         )}
-                      </InfoDisplay>
+                      </S.InfoItem>
                     );
                   })}
-                </div>
+                </S.InfoSection>
               )}
-
-              {/* 무결성 검증 결과 */}
+              
               {showVerificationResult && verificationResult && (
-                <div style={{ 
-                  borderTop: '1px solid #e5e5e5', 
-                  paddingTop: '1rem', 
-                  marginTop: '1rem' 
-                }}>
-                  <h3 style={{ 
-                    fontSize: '1.1rem', 
-                    fontWeight: 600, 
-                    marginBottom: '0.5rem',
-                    color: '#333',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px'
-                  }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill={verificationResult.overallSuccess ? '#4caf50' : '#f44336'}>
-                      <path d="M23,12L20.56,9.22L20.9,5.54L17.29,4.72L15.4,1.54L12,3L8.6,1.54L6.71,4.72L3.1,5.53L3.44,9.21L1,12L3.44,14.78L3.1,18.47L6.71,19.29L8.6,22.47L12,21L15.4,22.46L17.29,19.28L20.9,18.46L20.56,14.78L23,12M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z"/>
-                    </svg>
-                    무결성 검증 결과
-                    <button
-                      onClick={() => setShowVerificationResult(false)}
-                      style={{
-                        marginLeft: 'auto',
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontSize: '0.875rem',
-                        color: '#666'
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </h3>
+                <S.VerificationResultWrapper>
+                  <S.VerificationTitleContainer>
+                    <S.InfoSectionTitle>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill={verificationResult.overallSuccess ? '#4caf50' : '#f44336'}>
+                        <path d="M23,12L20.56,9.22L20.9,5.54L17.29,4.72L15.4,1.54L12,3L8.6,1.54L6.71,4.72L3.1,5.53L3.44,9.21L1,12L3.44,14.78L3.1,18.47L6.71,19.29L8.6,22.47L12,21L15.4,22.46L17.29,19.28L20.9,18.46L20.56,14.78L23,12M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z"/>
+                      </svg>
+                      무결성 검증 결과
+                    </S.InfoSectionTitle>
+                    <S.CloseVerificationButton onClick={() => setShowVerificationResult(false)}>×</S.CloseVerificationButton>
+                  </S.VerificationTitleContainer>
                   
-                  {/* 전체 검증 결과 */}
-                  <div style={{
-                    padding: '12px',
-                    background: verificationResult.overallSuccess ? '#e8f5e8' : '#ffebee',
-                    border: `1px solid ${verificationResult.overallSuccess ? '#4caf50' : '#f44336'}`,
-                    borderRadius: '4px',
-                    marginBottom: '1rem'
-                  }}>
-                    <strong style={{ color: verificationResult.overallSuccess ? '#2e7d32' : '#d32f2f' }}>
-                      {verificationResult.overallSuccess ? '✅ 검증 성공' : '❌ 검증 실패'}
-                    </strong>
-                    <br />
-                    <span style={{ fontSize: '0.875rem' }}>
-                      {verificationResult.message}
-                    </span>
-                    <br />
-                    <span style={{ fontSize: '0.75rem', color: '#666' }}>
-                      검증 시간: {moment(verificationResult.verifiedAt).format('YYYY년 MM월 DD일 HH:mm:ss')}
-                    </span>
-                  </div>
+                  <S.OverallVerificationBox isSuccess={verificationResult.overallSuccess}>
+                    <strong>{verificationResult.overallSuccess ? '✅ 검증 성공' : '❌ 검증 실패'}</strong>
+                    <span>{verificationResult.message}</span>
+                    <span className="verified-time">검증 시간: {moment(verificationResult.verifiedAt).format('YYYY년 MM월 DD일 HH:mm:ss')}</span>
+                  </S.OverallVerificationBox>
 
-                  {/* DB 검증 결과 */}
-                  <div style={{ marginBottom: '1rem' }}>
-                    <h4 style={{ fontSize: '1rem', marginBottom: '0.5rem', color: '#333' }}>
-                      1. DB 기록 무결성 검증
-                    </h4>
-                    <div style={{
-                      padding: '8px 12px',
-                      background: getVerificationStatusColor(verificationResult.dbVerification.status).background,
-                      border: `1px solid ${getVerificationStatusColor(verificationResult.dbVerification.status).border}`,
-                      borderRadius: '4px',
-                      fontSize: '0.875rem'
-                    }}>
-                      <strong>{getVerificationStatusText(verificationResult.dbVerification.status)}</strong>
-                      <br />
-                      {verificationResult.dbVerification.details}
-                      {verificationResult.dbVerification.discrepancies && verificationResult.dbVerification.discrepancies.length > 0 && (
-                        <div style={{ marginTop: '8px' }}>
-                          <strong>불일치 항목:</strong>
-                          <ul style={{ margin: '4px 0', paddingLeft: '20px' }}>
-                            {verificationResult.dbVerification.discrepancies.map((item: string, index: number) => (
-                              <li key={index} style={{ fontSize: '0.8rem' }}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <S.VerificationStepDetailBox status={verificationResult.dbVerification.status}>
+                    <h4>1. DB 기록 무결성 검증</h4>
+                    <strong>{getVerificationStatusText(verificationResult.dbVerification.status)}</strong>
+                    <div className="details-text">{verificationResult.dbVerification.details}</div>
+                    {verificationResult.dbVerification.discrepancies && verificationResult.dbVerification.discrepancies.length > 0 && (
+                      <S.DiscrepancyList>
+                        {verificationResult.dbVerification.discrepancies.map((item: string, index: number) => (
+                          <S.DiscrepancyItem key={`db-disc-${index}`}>{item}</S.DiscrepancyItem>
+                        ))}
+                      </S.DiscrepancyList>
+                    )}
+                  </S.VerificationStepDetailBox>
 
-                  {/* 블록체인 검증 결과 */}
-                  <div style={{ marginBottom: '1rem' }}>
-                    <h4 style={{ fontSize: '1rem', marginBottom: '0.5rem', color: '#333' }}>
-                      2. 블록체인 데이터 비교 검증
-                    </h4>
-                    <div style={{
-                      padding: '8px 12px',
-                      background: getVerificationStatusColor(verificationResult.blockchainVerification.status).background,
-                      border: `1px solid ${getVerificationStatusColor(verificationResult.blockchainVerification.status).border}`,
-                      borderRadius: '4px',
-                      fontSize: '0.875rem'
-                    }}>
-                      <strong>{getVerificationStatusText(verificationResult.blockchainVerification.status)}</strong>
-                      <br />
-                      {verificationResult.blockchainVerification.details}
-                      {verificationResult.blockchainVerification.discrepancies && verificationResult.blockchainVerification.discrepancies.length > 0 && (
-                        <div style={{ marginTop: '8px' }}>
-                          <strong>불일치 항목:</strong>
-                          <ul style={{ margin: '4px 0', paddingLeft: '20px' }}>
-                            {verificationResult.blockchainVerification.discrepancies.map((item: string, index: number) => (
-                              <li key={index} style={{ fontSize: '0.8rem' }}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                  <S.VerificationStepDetailBox status={verificationResult.blockchainVerification.status}>
+                    <h4>2. 블록체인 데이터 비교 검증</h4>
+                    <strong>{getVerificationStatusText(verificationResult.blockchainVerification.status)}</strong>
+                    <div className="details-text">{verificationResult.blockchainVerification.details}</div>
+                    {verificationResult.blockchainVerification.discrepancies && verificationResult.blockchainVerification.discrepancies.length > 0 && (
+                       <S.DiscrepancyList>
+                        {verificationResult.blockchainVerification.discrepancies.map((item: string, index: number) => (
+                          <S.DiscrepancyItem key={`bc-disc-${index}`}>{item}</S.DiscrepancyItem>
+                        ))}
+                      </S.DiscrepancyList>
+                    )}
+                  </S.VerificationStepDetailBox>
+                </S.VerificationResultWrapper>
               )}
 
-              {/* 서명 상태 메시지 */}
               {currentUser && statusDisplay && (
-                <div style={{ 
-                  borderTop: '1px solid #e5e5e5', 
-                  paddingTop: '1rem', 
-                  marginTop: '1rem' 
-                }}>
-                  <div style={{
-                    padding: '12px',
-                    background: statusDisplay.backgroundColor,
-                    border: `1px solid ${statusDisplay.borderColor}`,
-                    borderRadius: '4px',
-                    color: statusDisplay.textColor
-                  }}>
-                    <strong>{statusDisplay.title}</strong><br />
-                    {statusDisplay.message}
-                  </div>
-                </div>
+                <S.SigningStatusBox 
+                    backgroundColor={statusDisplay.backgroundColor} 
+                    borderColor={statusDisplay.borderColor} 
+                    textColor={statusDisplay.textColor}
+                >
+                  <strong>{statusDisplay.title}</strong>
+                  {statusDisplay.message}
+                </S.SigningStatusBox>
               )}
-
             </>
-          ) : (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
-              계약서를 선택해주세요.
-            </div>
           )}
-        </ModalBody>
+          {!contract && !loading && !error && ( // 초기 로딩 전 또는 컨트랙트 ID가 없을 때
+             <S.PdfMessage>계약서 정보를 표시할 수 없습니다.</S.PdfMessage>
+          )}
+        </S.DetailsContainer>
+      </S.ModalBodyWrapper>
 
-        <ModalFooter>
-          <FooterButton type="button" onClick={handleClose}>
-            닫기
+      <ModalFooter> {/* 공용 스타일 사용 */}
+        <FooterButton type="button" onClick={handleClose}>닫기</FooterButton>
+        {contract && currentUser && canSign() && (
+          <FooterButton /* variant="success" */ // 공용 스타일 사용시 variant로 구분 가능
+            type="button" 
+            onClick={handleSign}
+            disabled={signing}
+            style={{backgroundColor: signing ? '#A5D6A7' : '#4CAF50', color: 'white'}} // 직접 스타일 지정 유지
+          >
+            {signing ? '서명 중...' : '서명하기'}
           </FooterButton>
-          
-          {/* 서명 가능한 경우에만 서명 버튼 표시 */}
-          {contract && currentUser && canSign() && (
-            <FooterButton 
-              type="button" 
-              onClick={handleSign}
-              disabled={signing}
-              style={{
-                backgroundColor: signing ? '#ccc' : '#4caf50',
-                borderColor: signing ? '#ccc' : '#4caf50'
-              }}
-            >
-              {signing ? '서명 중...' : '서명하기'}
-            </FooterButton>
-          )}
-          
-          {/* 이미 서명한 경우 서명 완료 버튼 표시 (비활성화) */}
-          {contract && currentUser && hasUserSigned() && !canSign() && (
-            <FooterButton 
-              type="button" 
-              disabled={true}
-              style={{
-                backgroundColor: '#4caf50',
-                borderColor: '#4caf50',
-                opacity: 0.7,
-                cursor: 'not-allowed'
-              }}
-            >
-              ✅ 서명 완료
-            </FooterButton>
-          )}
-        </ModalFooter>
-      </Modal>
-
-      {/* PDF 뷰어 모달 */}
-      {showPdfViewer && pdfUrl && (
-        <Modal
-          isOpen={showPdfViewer}
-          onRequestClose={closePdfViewer}
-          style={{
-            overlay: {
-              backgroundColor: "rgba(0, 0, 0, 0.8)",
-              zIndex: 2000,
-            },
-            content: {
-              top: '5%',
-              left: '5%',
-              right: '5%',
-              bottom: '5%',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '0',
-            },
-          }}
-          contentLabel="PDF 미리보기"
-        >
-          <div style={{
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-          }}>
-            {/* PDF 뷰어 헤더 */}
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '16px',
-              borderBottom: '1px solid #e5e5e5',
-              backgroundColor: '#f8f9fa'
-            }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>
-                {contract?.title} - PDF 미리보기
-              </h3>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  onClick={() => contract?.currentVersion && downloadPdf(
-                    contract.currentVersion.filePath, 
-                    `${contract.title}_v${contract.currentVersion.versionNumber}.pdf`
-                  )}
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#388e3c',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem'
-                  }}
-                >
-                  다운로드
-                </button>
-                <button
-                  onClick={closePdfViewer}
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#6c757d',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem'
-                  }}
-                >
-                  닫기
-                </button>
-              </div>
-            </div>
-
-            {/* PDF 뷰어 본문 */}
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              <iframe
-                src={pdfUrl}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  border: 'none',
-                }}
-                title="PDF 미리보기"
-              />
-            </div>
-          </div>
-        </Modal>
-      )}
-    </>
+        )}
+        {contract && currentUser && hasUserSigned() && !canSign() && (
+          <FooterButton 
+            type="button" 
+            disabled={true}
+            style={{backgroundColor: '#4CAF50', color: 'white', opacity: 0.7, cursor: 'not-allowed'}}
+          >
+            ✅ 서명 완료
+          </FooterButton>
+        )}
+      </ModalFooter>
+    </Modal>
   );
 };
 
