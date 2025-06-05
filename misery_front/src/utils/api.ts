@@ -282,4 +282,124 @@ export const verifyContractIntegrity = async (contractId: number, versionNumber:
   return res.json();
 };
 
+// 계약서 미리보기 (현재 버전)
+export const getContractPreview = async (contractId: number): Promise<Blob> => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`https://localhost:8443/api/contracts/${contractId}/preview`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  
+  if (!res.ok) {
+    throw new Error(`계약서 미리보기 실패: ${res.statusText}`);
+  }
+  
+  return res.blob();
+};
+
+// 특정 버전 계약서 미리보기
+export const getContractVersionPreview = async (contractId: number, versionNumber: number): Promise<Blob> => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`https://localhost:8443/api/contracts/${contractId}/versions/${versionNumber}/preview`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  
+  if (!res.ok) {
+    throw new Error(`계약서 버전 미리보기 실패: ${res.statusText}`);
+  }
+  
+  return res.blob();
+};
+
+// 계약서 다운로드 (현재 버전)
+export const downloadContract = async (contractId: number): Promise<Blob> => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`https://localhost:8443/api/contracts/${contractId}/download`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  
+  if (!res.ok) {
+    throw new Error(`계약서 다운로드 실패: ${res.statusText}`);
+  }
+  
+  return res.blob();
+};
+
+// 특정 버전 계약서 다운로드
+export const downloadContractVersion = async (contractId: number, versionNumber: number): Promise<Blob> => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`https://localhost:8443/api/contracts/${contractId}/versions/${versionNumber}/download`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  
+  if (!res.ok) {
+    throw new Error(`계약서 버전 다운로드 실패: ${res.statusText}`);
+  }
+  
+  return res.blob();
+};
+
+// 계약서 미리보기용 URL 생성 (기존 함수 업데이트)
+export const getContractPreviewUrl = async (contractId: number): Promise<string> => {
+  const blob = await getContractPreview(contractId);
+  return URL.createObjectURL(blob);
+};
+
+// 특정 버전 계약서 미리보기용 URL 생성
+export const getContractVersionPreviewUrl = async (contractId: number, versionNumber: number): Promise<string> => {
+  const blob = await getContractVersionPreview(contractId, versionNumber);
+  return URL.createObjectURL(blob);
+};
+
+// 계약서 직접 다운로드 (파일 저장)
+export const downloadContractDirectly = async (contractId: number, fileName?: string) => {
+  try {
+    const blob = await downloadContract(contractId);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName || `contract_${contractId}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('계약서 다운로드 오류:', error);
+    throw error;
+  }
+};
+
+// 특정 버전 계약서 직접 다운로드
+export const downloadContractVersionDirectly = async (contractId: number, versionNumber: number, fileName?: string) => {
+  try {
+    const blob = await downloadContractVersion(contractId, versionNumber);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName || `contract_${contractId}_v${versionNumber}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('계약서 버전 다운로드 오류:', error);
+    throw error;
+  }
+};
+
 

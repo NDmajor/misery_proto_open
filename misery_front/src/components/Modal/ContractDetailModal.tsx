@@ -2,12 +2,27 @@
 import React, { useState, useEffect } from 'react';
 import Modal from 'react-modal';
 import moment from 'moment';
+import { Document, Page, pdfjs } from 'react-pdf';
+import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
+import 'react-pdf/dist/esm/Page/TextLayer.css';
 
-import * as S from './ContractDetailModal.styles'; // 변경된 스타일 파일
-import { ModalHeader, ModalLogo, LogoCircle, CloseButton, ModalFooter, FooterButton } from './styles'; // 공용 모달 스타일
+import * as S from './ContractDetailModal.styles';
+import { ModalHeader, ModalLogo, LogoCircle, CloseButton, ModalFooter, FooterButton } from './styles';
 import CustomModal from './Modal'; 
 
-import { getContractDetails, signContract, getCurrentUser, downloadContractFile, downloadFileDirectly, verifyContractIntegrity } from '../../utils/api';
+import { getContractDetails, 
+  signContract, 
+  getCurrentUser, 
+  downloadFileDirectly, 
+  verifyContractIntegrity, 
+  getContractPreviewUrl,         
+  downloadContractDirectly,
+  getContractVersionPreviewUrl,   
+  downloadContractVersionDirectly      
+} from '../../utils/api';
+
+// react-pdf worker 설정
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
 // 타입 정의
 interface ContractDetailModalProps {
@@ -63,27 +78,124 @@ interface ContractDetail {
   versionHistory: Version[];
 }
 
-// currentUser 상태를 위한 타입
 interface CurrentUser extends ContractUser {
-  uuid?: string; // API 응답에 따라 uuid가 있을 수 있음
+  uuid?: string;
   userUuid?: string;
 }
 
-// verificationResult 상태를 위한 타입
 interface VerificationStep {
   status: string;
   details: string;
   discrepancies: string[];
 }
+
 interface VerificationResultData {
   overallSuccess: boolean;
   message: string;
   verifiedAt: string;
   dbVerification: VerificationStep;
   blockchainVerification: VerificationStep;
-  // contractVersionId: number; // 필요시 추가
 }
 
+// 디버깅이 강화된 파일 다운로드 함수
+const downloadContractFileForPreview = async (filePath: string): Promise<ArrayBuffer> => {
+  const token = localStorage.getItem('token');
+  
+  if (!token) {
+    throw new Error('인증 토큰이 없습니다.');
+  }
+
+  // URL 디코딩된 filePath 확인
+  console.log('원본 filePath:', filePath);
+  console.log('인코딩된 filePath:', encodeURIComponent(filePath));
+  
+  const url = `https://localhost:8443/api/contracts/files/${encodeURIComponent(filePath)}`;
+  console.log('요청 URL:', url);
+
+  try {
+    // OPTIONS preflight 요청 먼저 테스트
+    console.log('OPTIONS preflight 요청 테스트...');
+    const optionsResponse = await fetch(url, {
+      method: 'OPTIONS',
+      mode: 'cors',
+      credentials: 'include',
+      headers: {
+        'Origin': 'https://localhost:5173',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization,content-type',
+      },
+    });
+    
+    console.log('OPTIONS 응답:', {
+      status: optionsResponse.status,
+      headers: Object.fromEntries(optionsResponse.headers.entries())
+    });
+
+    // 실제 GET 요청
+    console.log('GET 요청 시작...');
+    const response = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'include',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/pdf, application/octet-stream, */*',
+        'Content-Type': 'application/json',
+        'Origin': 'https://localhost:5173',
+      },
+    });
+    
+    console.log('GET 응답:', {
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries())
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error('응답 오류 내용:', errorText);
+      
+      if (response.status === 401) {
+        throw new Error('인증이 필요합니다. 다시 로그인해주세요.');
+      } else if (response.status === 403) {
+        throw new Error('이 파일에 접근할 권한이 없습니다.');
+      } else if (response.status === 404) {
+        throw new Error('파일을 찾을 수 없습니다.');
+      } else {
+        throw new Error(`파일 다운로드 실패: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+    }
+    
+    const blob = await response.blob();
+    console.log('Blob 정보:', {
+      size: blob.size,
+      type: blob.type
+    });
+    
+    if (blob.size === 0) {
+      throw new Error('다운로드된 파일이 비어있습니다.');
+    }
+    
+    return blob.arrayBuffer();
+    
+  } catch (error) {
+    console.error('파일 다운로드 상세 오류:', {
+      error: error,
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
+    if (error instanceof TypeError) {
+      if (error.message.includes('Failed to fetch')) {
+        throw new Error('네트워크 연결 오류: 백엔드 서버에 연결할 수 없습니다. CORS 설정을 확인해주세요.');
+      } else if (error.message.includes('NetworkError')) {
+        throw new Error('네트워크 오류: CORS 정책에 의해 차단되었습니다.');
+      }
+    }
+    
+    throw error;
+  }
+};
 
 const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   isOpen,
@@ -95,11 +207,18 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [signing, setSigning] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null); // 타입 적용
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  
+  // PDF 관련 상태
+  const [pdfFile, setPdfFile] = useState<ArrayBuffer | null>(null);
   const [pdfLoading, setPdfLoading] = useState<boolean>(false);
+  const [numPages, setNumPages] = useState<number>(0);
+  const [pageNumber, setPageNumber] = useState<number>(1);
+  const [scale, setScale] = useState<number>(1.0);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  
   const [verifying, setVerifying] = useState<boolean>(false);
-  const [verificationResult, setVerificationResult] = useState<VerificationResultData | null>(null); // 타입 적용
+  const [verificationResult, setVerificationResult] = useState<VerificationResultData | null>(null);
   const [showVerificationResult, setShowVerificationResult] = useState<boolean>(false);
 
   useEffect(() => {
@@ -117,46 +236,60 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     if (isOpen) {
       loadCurrentUser();
     } else {
+      // 모달이 닫힐 때 상태 초기화
       setContract(null);
       setError(null);
       setCurrentUser(null);
       setVerificationResult(null);
       setShowVerificationResult(false);
-      if (pdfUrl) {
-        URL.revokeObjectURL(pdfUrl);
-        setPdfUrl(null);
-      }
+      setPdfFile(null);
+      setPdfError(null);
+      setPageNumber(1);
+      setNumPages(0);
+      setScale(1.0);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]); // pdfUrl 의존성 제거 (handleClose에서 처리 또는 isOpen false일때 처리)
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen && contractId) {
-      const fetchDetailsAndPdf = async () => {
-        await loadContractDetails(contractId);
-      };
-      fetchDetailsAndPdf();
+      loadContractDetails(contractId);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, contractId]);
 
-   useEffect(() => {
-    if (contract?.currentVersion?.filePath && !pdfUrl && isOpen) {
-      generatePdfUrl(contract.currentVersion.filePath);
+  useEffect(() => {
+    if (contract?.currentVersion?.filePath && !pdfFile && isOpen) {
+      loadPdfFile(contract.currentVersion.filePath);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contract, isOpen]); // isOpen 추가
+  }, [contract, isOpen, pdfFile]);
+
+  useEffect(() => {
+    if (contract?.id && !pdfUrl && isOpen) {
+      generatePdfUrl(contract.id);
+    }
+  }, [contract, isOpen]);
+
+  // generatePdfUrl 함수 업데이트
+const generatePdfUrl = async (contractId: number) => {
+  try {
+    setPdfLoading(true);
+    // 계약서 ID 기반으로 미리보기 URL 생성
+    const url = await getContractPreviewUrl(contractId);
+    setPdfUrl(url);
+  } catch (err) {
+    console.error('PDF 미리보기 로드 오류:', err);
+    setError('PDF 파일을 불러오는 중 오류가 발생했습니다.');
+  } finally {
+    setPdfLoading(false);
+  }
+};
+
+
 
   const loadContractDetails = async (currentContractId: number) => {
     if (!currentContractId) return;
     
     setLoading(true);
     setError(null);
-    setPdfLoading(true); 
-    if (pdfUrl) { // 이전 PDF URL 해제
-        URL.revokeObjectURL(pdfUrl);
-        setPdfUrl(null);
-    }
     
     try {
       const response = await getContractDetails(currentContractId);
@@ -164,39 +297,92 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
         setContract(response.data);
       } else {
         setError(response.message || '계약서 정보를 불러올 수 없습니다.');
-        setPdfLoading(false);
       }
     } catch (err) {
-      setError('계약서 정보를 불러오는 중 오류가 발생했습니다.');
+      const errorMessage = err instanceof Error ? err.message : '계약서 정보를 불러오는 중 오류가 발생했습니다.';
+      setError(errorMessage);
       console.error('계약서 상세 로드 오류:', err);
-      setPdfLoading(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const generatePdfUrl = async (filePath: string) => {
+  const loadPdfFile = async (filePath: string) => {
+    if (!filePath) {
+      setPdfError('파일 경로가 없습니다.');
+      return;
+    }
+
     try {
-      setPdfLoading(true); 
-      const blob = await downloadContractFile(filePath);
-      const url = URL.createObjectURL(blob);
-      setPdfUrl(url);
+      setPdfLoading(true);
+      setPdfError(null);
+      console.log('PDF 파일 로드 시작:', filePath);
+      
+      const arrayBuffer = await downloadContractFileForPreview(filePath);
+      console.log('PDF 파일 로드 성공, 크기:', arrayBuffer.byteLength, 'bytes');
+      
+      setPdfFile(arrayBuffer);
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'PDF 파일을 불러오는 중 알 수 없는 오류가 발생했습니다.';
       console.error('PDF 로드 오류:', err);
-      setError('PDF 파일을 불러오는 중 오류가 발생했습니다.'); 
+      setPdfError(errorMessage);
     } finally {
       setPdfLoading(false);
     }
   };
 
-  const downloadPdf = async () => { 
-    if (!contract?.currentVersion?.filePath) return;
-    try {
-      const fileName = `${contract.title}_v${contract.currentVersion.versionNumber}.pdf`;
-      await downloadFileDirectly(contract.currentVersion.filePath, fileName);
-    } catch (err) {
-      console.error('다운로드 오류:', err);
-      alert('파일 다운로드 중 오류가 발생했습니다.');
+  const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
+    console.log('PDF 문서 로드 성공, 총 페이지:', numPages);
+    setNumPages(numPages);
+    setPageNumber(1);
+    setPdfError(null);
+  };
+
+  const onDocumentLoadError = (error: Error) => {
+    console.error('PDF 문서 로드 오류:', error);
+    setPdfError('PDF 문서를 로드할 수 없습니다. 파일이 손상되었거나 지원되지 않는 형식입니다.');
+  };
+
+  const changePage = (offset: number) => {
+    setPageNumber(prevPageNumber => {
+      const newPageNumber = prevPageNumber + offset;
+      return Math.min(Math.max(newPageNumber, 1), numPages);
+    });
+  };
+
+  const zoomIn = () => {
+    setScale(prevScale => Math.min(prevScale + 0.2, 3.0));
+  };
+
+  const zoomOut = () => {
+    setScale(prevScale => Math.max(prevScale - 0.2, 0.5));
+  };
+
+  const resetZoom = () => {
+    setScale(1.0);
+  };
+
+  // downloadPdf 함수 업데이트
+const downloadPdf = async () => {
+  if (!contract?.id) return;
+  
+  try {
+    // 계약서 제목 기반 파일명 생성
+    const fileName = `${contract.title.replace(/[^a-zA-Z0-9가-힣\s]/g, '').replace(/\s+/g, '_')}_v${contract.currentVersion?.versionNumber || 1}.pdf`;
+    
+    // 계약서 ID 기반으로 다운로드
+    await downloadContractDirectly(contract.id, fileName);
+  } catch (err) {
+    console.error('다운로드 오류:', err);
+    alert('파일 다운로드 중 오류가 발생했습니다.');
+  }
+};
+
+  const handleRetryPdfLoad = () => {
+    if (contract?.currentVersion?.filePath) {
+      setPdfFile(null);
+      setPdfError(null);
+      loadPdfFile(contract.currentVersion.filePath);
     }
   };
   
@@ -250,13 +436,10 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   };
 
   const handleClose = () => {
-    if (pdfUrl) { // 모달 닫을 때 URL 해제
-        URL.revokeObjectURL(pdfUrl);
-        setPdfUrl(null);
-    }
     onClose();
   };
 
+  // 나머지 헬퍼 함수들은 동일...
   const hasUserSigned = () => {
     if (!contract || !contract.currentVersion || !currentUser) {
       return false;
@@ -393,7 +576,7 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
       }}
       contentLabel="계약서 상세"
     >
-      <ModalHeader> {/* 공용 스타일 사용 */}
+      <ModalHeader>
         <ModalLogo>
           <LogoCircle>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -401,7 +584,7 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
             </svg>
           </LogoCircle>
         </ModalLogo>
-        <CloseButton type="button" onClick={handleClose}> {/* 공용 스타일 사용 */}
+        <CloseButton type="button" onClick={handleClose}>
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
           </svg>
@@ -410,22 +593,183 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
 
       <S.ModalBodyWrapper>
         <S.PdfPreviewContainer>
-          {pdfLoading && <S.PdfMessage>PDF 미리보기 로딩 중...</S.PdfMessage>}
-          {!pdfLoading && pdfUrl && <S.PdfFrame src={pdfUrl} title={`${contract?.title || '계약서'} 미리보기`} />}
-          {!pdfLoading && !pdfUrl && contract?.currentVersion?.filePath && !error && (
+          {pdfLoading && (
+            <S.PdfMessage>PDF 미리보기 로딩 중...</S.PdfMessage>
+          )}
+          
+          {pdfError && (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+              <S.PdfMessage style={{color: 'red', marginBottom: '16px'}}>{pdfError}</S.PdfMessage>
+              <button 
+                onClick={handleRetryPdfLoad}
+                style={{
+                  padding: '8px 16px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  backgroundColor: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                다시 시도
+              </button>
+            </div>
+          )}
+          
+          {!pdfLoading && !pdfError && !pdfFile && contract?.currentVersion?.filePath && (
             <S.PdfMessage>PDF를 불러오고 있습니다...</S.PdfMessage>
           )}
-           {!pdfLoading && !pdfUrl && !contract?.currentVersion?.filePath && !error && (
-             <S.PdfMessage>표시할 PDF 파일이 없습니다.</S.PdfMessage>
+          
+          {!pdfLoading && !pdfError && !pdfFile && !contract?.currentVersion?.filePath && (
+            <S.PdfMessage>표시할 PDF 파일이 없습니다.</S.PdfMessage>
           )}
-          {error && !pdfLoading && <S.PdfMessage style={{color: 'red'}}>{error}</S.PdfMessage>}
+          
+          {!pdfLoading && !pdfError && pdfFile && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center' }}>
+              {/* PDF 컨트롤 바 */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px',
+                borderBottom: '1px solid #e0e0e0',
+                width: '100%',
+                justifyContent: 'center',
+                backgroundColor: '#f9f9f9',
+                flexShrink: 0
+              }}>
+                <button 
+                  onClick={() => changePage(-1)} 
+                  disabled={pageNumber <= 1}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    backgroundColor: pageNumber <= 1 ? '#f5f5f5' : 'white',
+                    cursor: pageNumber <= 1 ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  이전
+                </button>
+                
+                <span style={{ fontSize: '14px', minWidth: '80px', textAlign: 'center' }}>
+                  {pageNumber} / {numPages}
+                </span>
+                
+                <button 
+                  onClick={() => changePage(1)} 
+                  disabled={pageNumber >= numPages}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    backgroundColor: pageNumber >= numPages ? '#f5f5f5' : 'white',
+                    cursor: pageNumber >= numPages ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  다음
+                </button>
+                
+                <div style={{ borderLeft: '1px solid #ccc', height: '20px', margin: '0 8px' }} />
+                
+                <button 
+                  onClick={zoomOut}
+                  disabled={scale <= 0.5}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    backgroundColor: scale <= 0.5 ? '#f5f5f5' : 'white',
+                    cursor: scale <= 0.5 ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  -
+                </button>
+                
+                <span style={{ fontSize: '14px', minWidth: '50px', textAlign: 'center' }}>
+                  {Math.round(scale * 100)}%
+                </span>
+                
+                <button 
+                  onClick={zoomIn}
+                  disabled={scale >= 3.0}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    backgroundColor: scale >= 3.0 ? '#f5f5f5' : 'white',
+                    cursor: scale >= 3.0 ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  +
+                </button>
+                
+                <button 
+                  onClick={resetZoom}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    backgroundColor: 'white',
+                    cursor: 'pointer'
+                  }}
+                >
+                  100%
+                </button>
+              </div>
+              
+              {/* PDF 문서 */}
+              <div style={{ 
+                flex: 1, 
+                overflow: 'auto', 
+                display: 'flex', 
+                justifyContent: 'center',
+                alignItems: 'flex-start',
+                padding: '16px',
+                width: '100%'
+              }}>
+                <Document
+                  file={pdfFile}
+                  onLoadSuccess={onDocumentLoadSuccess}
+                  onLoadError={onDocumentLoadError}
+                  loading={<div>PDF 문서를 로드하는 중...</div>}
+                  error={<div style={{color: 'red'}}>PDF 문서를 로드할 수 없습니다.</div>}
+                  noData={<div>PDF 파일이 없습니다.</div>}
+                >
+                  <Page
+                    pageNumber={pageNumber}
+                    scale={scale}
+                    loading={<div>페이지를 로드하는 중...</div>}
+                    error={<div style={{color: 'red'}}>페이지를 로드할 수 없습니다.</div>}
+                    noData={<div>페이지 데이터가 없습니다.</div>}
+                  />
+                </Document>
+              </div>
+            </div>
+          )}
         </S.PdfPreviewContainer>
 
         <S.DetailsContainer>
           {loading && !contract && <S.PdfMessage>계약서 정보를 불러오는 중...</S.PdfMessage>}
-          {/* error state는 pdf 로딩 에러와 통합하여 PdfPreviewContainer에서 주로 처리 */}
           
-          {contract && (
+          {error && !loading && (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+              <S.PdfMessage style={{color: 'red', marginBottom: '16px'}}>{error}</S.PdfMessage>
+              <button 
+                onClick={() => contractId && loadContractDetails(contractId)}
+                style={{
+                  padding: '8px 16px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  backgroundColor: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                다시 시도
+              </button>
+            </div>
+          )}
+          
+          {contract && !error && (
             <>
               <S.InfoSectionTitle style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>{contract.title}</S.InfoSectionTitle>
               
@@ -580,20 +924,20 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
               )}
             </>
           )}
-          {!contract && !loading && !error && ( // 초기 로딩 전 또는 컨트랙트 ID가 없을 때
+          {!contract && !loading && !error && (
              <S.PdfMessage>계약서 정보를 표시할 수 없습니다.</S.PdfMessage>
           )}
         </S.DetailsContainer>
       </S.ModalBodyWrapper>
 
-      <ModalFooter> {/* 공용 스타일 사용 */}
+      <ModalFooter>
         <FooterButton type="button" onClick={handleClose}>닫기</FooterButton>
         {contract && currentUser && canSign() && (
-          <FooterButton /* variant="success" */ // 공용 스타일 사용시 variant로 구분 가능
+          <FooterButton
             type="button" 
             onClick={handleSign}
             disabled={signing}
-            style={{backgroundColor: signing ? '#A5D6A7' : '#4CAF50', color: 'white'}} // 직접 스타일 지정 유지
+            style={{backgroundColor: signing ? '#A5D6A7' : '#4CAF50', color: 'white'}}
           >
             {signing ? '서명 중...' : '서명하기'}
           </FooterButton>
