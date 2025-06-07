@@ -2,14 +2,19 @@
 import React, { useState, useEffect } from 'react';
 import Modal from 'react-modal';
 import moment from 'moment';
-import PdfViewer from './PdfViewer/PdfViewer';
-
 
 import * as S from './ContractDetailModal.styles'; // 변경된 스타일 파일
 import { ModalHeader, ModalLogo, LogoCircle, CloseButton, ModalFooter, FooterButton } from './styles'; // 공용 모달 스타일
 import CustomModal from './Modal'; 
 
-import { getContractDetails, signContract, getCurrentUser, downloadContractFile, streamContractFile, verifyContractIntegrity, getContractPreviewUrl } from '../../utils/api';
+import { 
+  getContractDetails, 
+  signContract, 
+  getCurrentUser, 
+  downloadContractFileDirectly,
+  verifyContractIntegrity, 
+  getContractPreviewBlob  // 새로운 함수 사용
+} from '../../utils/api';
 
 // 타입 정의
 interface ContractDetailModalProps {
@@ -97,11 +102,11 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [signing, setSigning] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null); // 타입 적용
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState<boolean>(false);
   const [verifying, setVerifying] = useState<boolean>(false);
-  const [verificationResult, setVerificationResult] = useState<VerificationResultData | null>(null); // 타입 적용
+  const [verificationResult, setVerificationResult] = useState<VerificationResultData | null>(null);
   const [showVerificationResult, setShowVerificationResult] = useState<boolean>(false);
 
   useEffect(() => {
@@ -129,36 +134,26 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
         setPdfUrl(null);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]); // pdfUrl 의존성 제거 (handleClose에서 처리 또는 isOpen false일때 처리)
+  }, [isOpen, pdfUrl]);
 
   useEffect(() => {
     if (isOpen && contractId) {
-      const fetchDetailsAndPdf = async () => {
-        await loadContractDetails(contractId);
-      };
-      fetchDetailsAndPdf();
+      loadContractDetails(contractId);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, contractId]);
 
-   useEffect(() => {
-    if (contract?.currentVersion?.filePath && !pdfUrl && isOpen) {
-      generatePdfUrl(contract.currentVersion.filePath);
+  // PDF URL 생성
+  useEffect(() => {
+    if (contract?.currentVersion?.filePath && isOpen && !pdfUrl) {
+      generatePdfBlobUrl(contract.currentVersion.filePath);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contract, isOpen]); // isOpen 추가
+  }, [contract, isOpen, pdfUrl]);
 
   const loadContractDetails = async (currentContractId: number) => {
     if (!currentContractId) return;
     
     setLoading(true);
     setError(null);
-    setPdfLoading(true); 
-    if (pdfUrl) { // 이전 PDF URL 해제
-        URL.revokeObjectURL(pdfUrl);
-        setPdfUrl(null);
-    }
     
     try {
       const response = await getContractDetails(currentContractId);
@@ -166,26 +161,24 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
         setContract(response.data);
       } else {
         setError(response.message || '계약서 정보를 불러올 수 없습니다.');
-        setPdfLoading(false);
       }
     } catch (err) {
       setError('계약서 정보를 불러오는 중 오류가 발생했습니다.');
       console.error('계약서 상세 로드 오류:', err);
-      setPdfLoading(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const generatePdfUrl = async (filePath: string) => {
+  const generatePdfBlobUrl = async (filePath: string) => {
     try {
-      setPdfLoading(true); 
-      const blob = await downloadContractFile(filePath);
+      setPdfLoading(true);
+      const blob = await getContractPreviewBlob(filePath);
       const url = URL.createObjectURL(blob);
       setPdfUrl(url);
     } catch (err) {
       console.error('PDF 로드 오류:', err);
-      setError('PDF 파일을 불러오는 중 오류가 발생했습니다.'); 
+      setError('PDF 파일을 불러오는 중 오류가 발생했습니다.');
     } finally {
       setPdfLoading(false);
     }
@@ -195,7 +188,7 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     if (!contract?.currentVersion?.filePath) return;
     try {
       const fileName = `${contract.title}_v${contract.currentVersion.versionNumber}.pdf`;
-      await downloadFileDirectly(contract.currentVersion.filePath, fileName);
+      await downloadContractFileDirectly(contract.currentVersion.filePath, fileName);
     } catch (err) {
       console.error('다운로드 오류:', err);
       alert('파일 다운로드 중 오류가 발생했습니다.');
@@ -252,10 +245,7 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   };
 
   const handleClose = () => {
-    if (pdfUrl) { // 모달 닫을 때 URL 해제
-        URL.revokeObjectURL(pdfUrl);
-        setPdfUrl(null);
-    }
+    setPdfUrl(null); // 단순히 null로 설정
     onClose();
   };
 
@@ -272,7 +262,7 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
     );
   };
 
-  const isUserParticipant = () => {
+   const isUserParticipant = () => {
     if (!contract || !currentUser) {
       return false;
     }
@@ -395,7 +385,7 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
       }}
       contentLabel="계약서 상세"
     >
-      <ModalHeader> {/* 공용 스타일 사용 */}
+      <ModalHeader>
         <ModalLogo>
           <LogoCircle>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -403,7 +393,7 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
             </svg>
           </LogoCircle>
         </ModalLogo>
-        <CloseButton type="button" onClick={handleClose}> {/* 공용 스타일 사용 */}
+        <CloseButton type="button" onClick={handleClose}>
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
           </svg>
@@ -413,11 +403,16 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
       <S.ModalBodyWrapper>
         <S.PdfPreviewContainer>
           {pdfLoading && <S.PdfMessage>PDF 미리보기 로딩 중...</S.PdfMessage>}
-          {!pdfLoading && pdfUrl && <S.PdfFrame src={pdfUrl} title={`${contract?.title || '계약서'} 미리보기`} />}
+          {!pdfLoading && pdfUrl && (
+            <S.PdfFrame 
+              src={pdfUrl} 
+              title={`${contract?.title || '계약서'} 미리보기`}
+            />
+          )}
           {!pdfLoading && !pdfUrl && contract?.currentVersion?.filePath && !error && (
             <S.PdfMessage>PDF를 불러오고 있습니다...</S.PdfMessage>
           )}
-           {!pdfLoading && !pdfUrl && !contract?.currentVersion?.filePath && !error && (
+          {!pdfLoading && !pdfUrl && !contract?.currentVersion?.filePath && !error && (
              <S.PdfMessage>표시할 PDF 파일이 없습니다.</S.PdfMessage>
           )}
           {error && !pdfLoading && <S.PdfMessage style={{color: 'red'}}>{error}</S.PdfMessage>}
@@ -425,7 +420,6 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
 
         <S.DetailsContainer>
           {loading && !contract && <S.PdfMessage>계약서 정보를 불러오는 중...</S.PdfMessage>}
-          {/* error state는 pdf 로딩 에러와 통합하여 PdfPreviewContainer에서 주로 처리 */}
           
           {contract && (
             <>
@@ -588,14 +582,14 @@ const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
         </S.DetailsContainer>
       </S.ModalBodyWrapper>
 
-      <ModalFooter> {/* 공용 스타일 사용 */}
+      <ModalFooter>
         <FooterButton type="button" onClick={handleClose}>닫기</FooterButton>
         {contract && currentUser && canSign() && (
-          <FooterButton /* variant="success" */ // 공용 스타일 사용시 variant로 구분 가능
+          <FooterButton
             type="button" 
             onClick={handleSign}
             disabled={signing}
-            style={{backgroundColor: signing ? '#A5D6A7' : '#4CAF50', color: 'white'}} // 직접 스타일 지정 유지
+            style={{backgroundColor: signing ? '#A5D6A7' : '#4CAF50', color: 'white'}}
           >
             {signing ? '서명 중...' : '서명하기'}
           </FooterButton>

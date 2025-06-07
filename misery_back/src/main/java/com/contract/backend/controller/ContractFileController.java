@@ -58,11 +58,11 @@ public class ContractFileController {
 
     /**
      * 계약서 파일 미리보기 (스트리밍 지원)
-     * Range 헤더를 지원하여 부분적 콘텐츠 스트리밍 가능
+     * 경로 변수 대신 쿼리 파라미터 사용
      */
-    @GetMapping("/preview/{filePath:.+}")
+    @GetMapping("/preview")
     public ResponseEntity<Resource> previewContractFile(
-            @PathVariable String filePath,
+            @RequestParam("path") String filePath,  // 쿼리 파라미터로 변경
             @AuthenticationPrincipal String userUuid,
             @RequestHeader(value = "Range", required = false) String rangeHeader,
             HttpServletRequest request
@@ -100,11 +100,12 @@ public class ContractFileController {
     }
 
     /**
-     * 계약서 파일 다운로드 (기존 기능 유지)
+     * 계약서 파일 다운로드
+     * 쿼리 파라미터 방식으로 변경
      */
-    @GetMapping("/download/{filePath:.+}")
+    @GetMapping("/download")
     public ResponseEntity<Resource> downloadContractFile(
-            @PathVariable String filePath,
+            @RequestParam("path") String filePath,  // 쿼리 파라미터로 변경
             @AuthenticationPrincipal String userUuid
     ) {
         try {

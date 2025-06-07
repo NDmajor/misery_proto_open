@@ -194,11 +194,22 @@ export const getCurrentUser = async () => {
   return res.json();
 };
 
-export const getContractPreviewUrl = (filePath: string): string => {
+export const getContractPreviewBlob = async (filePath: string): Promise<Blob> => {
   const token = localStorage.getItem('token');
-  const baseUrl = 'https://localhost:8443/api/contracts/files/preview';
   const encodedPath = encodeURIComponent(filePath);
-  return `${baseUrl}/${encodedPath}`;
+  const res = await fetch(`https://localhost:8443/api/contracts/files/preview?path=${encodedPath}`, { // URL 형식을 ?path= 로 변경
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  
+  if (!res.ok) {
+    throw new Error(`파일 스트리밍 실패: ${res.statusText}`);
+  }
+  
+  return res.blob();
 };
 
 // 계약서 삭제
@@ -247,28 +258,37 @@ export const verifyContractIntegrity = async (contractId: number, versionNumber:
   return res.json();
 };
 
-// PDF 미리보기용 (Range 헤더 지원)
-export const streamContractFile = async (filePath: string): Promise<Blob> => {
-  const token = localStorage.getItem('token');
-  const res = await fetch(`https://localhost:8443/api/contracts/files/preview/${filePath}`, {
-    method: 'GET',
-    credentials: 'include',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  
-  if (!res.ok) {
-    throw new Error(`파일 스트리밍 실패: ${res.statusText}`);
+// 파일 다운로드용 - Fetch 방식으로 변경
+export const downloadContractFileDirectly = async (filePath: string, fileName?: string): Promise<void> => {
+  try {
+    const blob = await downloadContractFile(filePath);
+    
+    // Blob URL 생성 및 다운로드
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    if (fileName) {
+      link.download = fileName;
+    }
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Blob URL 해제
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error('파일 다운로드 오류:', err);
+    throw err;
   }
-  
-  return res.blob();
 };
 
-// 파일 다운로드용
+// Blob 방식의 다운로드 (Authorization 헤더 사용)
 export const downloadContractFile = async (filePath: string): Promise<Blob> => {
   const token = localStorage.getItem('token');
-  const res = await fetch(`https://localhost:8443/api/contracts/files/download/${filePath}`, {
+  // --- 수정된 부분 ---
+  const encodedPath = encodeURIComponent(filePath);
+  const res = await fetch(`https://localhost:8443/api/contracts/files/download?path=${encodedPath}`, { // URL 형식을 ?path= 로 변경
+  // ------------------
     method: 'GET',
     credentials: 'include',
     headers: {
