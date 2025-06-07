@@ -2,12 +2,14 @@
 import React, { useState, useEffect } from 'react';
 import Modal from 'react-modal';
 import moment from 'moment';
+import PdfViewer from './PdfViewer/PdfViewer';
+
 
 import * as S from './ContractDetailModal.styles'; // 변경된 스타일 파일
 import { ModalHeader, ModalLogo, LogoCircle, CloseButton, ModalFooter, FooterButton } from './styles'; // 공용 모달 스타일
 import CustomModal from './Modal'; 
 
-import { getContractDetails, signContract, getCurrentUser, downloadContractFile, downloadFileDirectly, verifyContractIntegrity } from '../../utils/api';
+import { getContractDetails, signContract, getCurrentUser, downloadContractFile, streamContractFile, verifyContractIntegrity, getContractPreviewUrl } from '../../utils/api';
 
 // 타입 정의
 interface ContractDetailModalProps {
