@@ -217,7 +217,6 @@ public class ContractService {
 
     @Transactional(readOnly = true)
     public ContractIntegrityVerificationDTO verifyContractIntegrity(Long contractId, int versionNumber, UserEntity requester) {
-        //삭제x 계약서만 조회
         ContractEntity contract = contractRepository.findByIdAndNotDeleted(contractId)
             .orElseThrow(() -> new CustomException(CustomExceptionEnum.CONTRACT_NOT_FOUND));
 

@@ -25,7 +25,9 @@ public class SecurityConfig {
             .authorizeHttpRequests()
             .requestMatchers("/auth/**").permitAll()
             .requestMatchers("/api/users/search").authenticated()
-            .requestMatchers("/api/contracts/files/**").authenticated() // 파일 다운로드 경로 추가
+            .requestMatchers("/api/contracts/files/preview/**").authenticated() // 파일 미리보기 경로 추가
+            .requestMatchers("/api/contracts/files/download/**").authenticated() // 파일 다운로드 경로 추가
+            .requestMatchers("/api/contracts/files/**").authenticated() // 기타 파일 관련 API
             .requestMatchers("/api/contracts/**").authenticated() // 모든 계약서 API
             .anyRequest().authenticated()
             .and()
@@ -40,8 +42,9 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(List.of("https://localhost:5173")); // React 개발 서버
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Content-Type","X-XSRF-TOKEN","Authorization"));
+        configuration.setAllowedHeaders(List.of("Content-Type","X-XSRF-TOKEN","Authorization", "Range")); // Range 헤더 추가
         configuration.setAllowCredentials(true);
+        configuration.setExposedHeaders(List.of("Content-Range", "Accept-Ranges", "Content-Length")); // Range 관련 헤더 노출
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
