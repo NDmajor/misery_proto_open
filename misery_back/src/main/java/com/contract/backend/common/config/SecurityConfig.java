@@ -25,16 +25,8 @@ public class SecurityConfig {
             .authorizeHttpRequests()
             .requestMatchers("/auth/**").permitAll()
             .requestMatchers("/api/users/search").authenticated()
-            
-            // 새로운 파일 접근 엔드포인트들
-            .requestMatchers("/api/contracts/*/preview").authenticated()         // 미리보기
-            .requestMatchers("/api/contracts/*/download").authenticated()        // 다운로드
-            .requestMatchers("/api/contracts/*/versions/*/preview").authenticated()  // 버전별 미리보기
-            .requestMatchers("/api/contracts/*/versions/*/download").authenticated() // 버전별 다운로드
-            
-            // 기존 엔드포인트들
-            .requestMatchers("/api/contracts/files/**").authenticated()     // 기존 파일 접근 (deprecated)
-            .requestMatchers("/api/contracts/**").authenticated()           // 모든 계약서 API
+            .requestMatchers("/api/contracts/files/**").authenticated() // 파일 다운로드 경로 추가
+            .requestMatchers("/api/contracts/**").authenticated() // 모든 계약서 API
             .anyRequest().authenticated()
             .and()
             .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider),
@@ -50,15 +42,6 @@ public class SecurityConfig {
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Content-Type","X-XSRF-TOKEN","Authorization"));
         configuration.setAllowCredentials(true);
-        
-        // PDF 관련 헤더들 노출 허용
-        configuration.setExposedHeaders(List.of(
-            "Content-Disposition", 
-            "Content-Type",
-            "Content-Length",
-            "Cache-Control",
-            "ETag"
-        ));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
