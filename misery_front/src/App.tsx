@@ -322,6 +322,7 @@ function App() {
     setSelectedContractId(contractId);
     setIsContractDetailModalOpen(true);
   };
+  
 
   // 폴더 클릭 핸들러
   const handleFolderClick = async (folderId: number, folderName: string) => {

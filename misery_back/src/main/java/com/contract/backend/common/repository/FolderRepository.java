@@ -42,4 +42,15 @@ public interface FolderRepository extends JpaRepository<FolderEntity, Long> {
     // ID로 삭제되지 않은 폴더 조회
     @Query("SELECT f FROM FolderEntity f WHERE f.id = :id AND f.deletedAt IS NULL")
     Optional<FolderEntity> findByIdAndNotDeleted(@Param("id") Long id);
+
+    //검색 메도스
+    @Query("SELECT f FROM FolderEntity f " +
+           "WHERE f.createdBy = :user " +
+           "AND LOWER(f.name) LIKE LOWER(CONCAT('%', :query, '%')) " +
+           "AND f.deletedAt IS NULL " +
+           "ORDER BY f.name ASC")
+    List<FolderEntity> searchUserFoldersByName(
+            @Param("user") UserEntity user,
+            @Param("query") String query
+    );
 }
